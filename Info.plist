@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.harborvault.mac</string>
+<key>CFBundleName</key><string>Harbor Vault</string>
+<key>CFBundleDisplayName</key><string>Harbor Vault</string>
+<key>CFBundleExecutable</key><string>HarborVault</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>1.2.0</string>
+<key>CFBundleVersion</key><string>8</string>
+<key>CFBundleIconFile</key><string>HarborVault</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSFaceIDUsageDescription</key><string>Authenticate to unlock your encrypted vault.</string>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSHumanReadableCopyright</key><string>Harbor Vault · Local-first encrypted storage</string>
+</dict></plist>

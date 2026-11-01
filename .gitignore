@@ -1,0 +1,24 @@
+# Deny by default: only application source, tests, tooling, and official fonts.
+# Runtime vaults, exports, photos, caches, builds, logs, and local history stay out.
+*
+!/.gitignore
+!/README.md
+!/Info.plist
+!/build.sh
+!/test.sh
+!/Sources/
+!/Sources/*.swift
+!/Tests/
+!/Tests/*.swift
+!/Tests/*.h
+!/Tests/*.m
+!/Tools/
+!/Tools/MakeIcon.swift
+!/Tools/PublishApp.py
+!/Resources/
+!/Resources/Fonts/
+!/Resources/Fonts/InstrumentSans.ttf
+!/Resources/Fonts/Manrope.ttf
+!/Resources/Licenses/
+!/Resources/Licenses/InstrumentSans-OFL.txt
+!/Resources/Licenses/Manrope-OFL.txt
