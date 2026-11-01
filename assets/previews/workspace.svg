@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" role="img" aria-labelledby="title desc">
+<title id="title">Harbor Vault illustrated demo workspace</title>
+<desc id="desc">A code-drawn light file browser. All names and document thumbnails are fictional. This is not a screenshot.</desc>
+<rect width="1280" height="800" fill="#edece8"/>
+<defs><clipPath id="window"><rect x="36" y="32" width="1208" height="728" rx="24"/></clipPath></defs>
+<g clip-path="url(#window)"><rect x="36" y="32" width="1208" height="728" fill="#fafaf8"/><rect x="36" y="32" width="238" height="728" fill="#f0f0ed"/><path d="M274 32V760" stroke="#deded8"/></g>
+<rect x="36.5" y="32.5" width="1207" height="727" rx="24" fill="none" stroke="#d4d4ce"/>
+<circle cx="61" cy="57" r="6" fill="#ef615a"/>
+<circle cx="82" cy="57" r="6" fill="#e9ba48"/>
+<circle cx="103" cy="57" r="6" fill="#64bd74"/>
+<rect x="60" y="97" width="40" height="40" rx="12" fill="#292b2d"/>
+<rect x="69" y="109" width="22" height="16" rx="3" fill="#e6a638"/>
+<rect x="69" y="105" width="9" height="8" rx="2" fill="#e6a638"/>
+<text x="112" y="117" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="23" font-weight="700" fill="#2b2c2d">Harbor</text>
+<text x="112" y="136" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="400" fill="#7a7b76">Private file storage</text>
+<rect x="53" y="170" width="203" height="44" rx="12" fill="#e7e5df"/>
+<text x="70" y="198" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="18" font-weight="400" fill="#2b2c2d">▦</text>
+<text x="104" y="198" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="14" font-weight="600" fill="#2b2c2d">Files</text>
+<text x="71" y="241" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="17" font-weight="400" fill="#72746e">⌫</text>
+<text x="104" y="241" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" font-weight="400" fill="#696b65">Recently Deleted</text>
+<text x="65" y="296" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="600" fill="#7d7e78">VAULTS</text>
+<rect x="53" y="312" width="203" height="44" rx="12" fill="#fff" stroke="#e0e0d9"/>
+<text x="70" y="340" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="16" font-weight="400" fill="#797b74">▣</text>
+<text x="104" y="340" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" font-weight="600" fill="#2b2c2d">Demo vault</text>
+<circle cx="235" cy="335" r="3" fill="#5d936f"/>
+<text x="70" y="385" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="16" font-weight="400" fill="#797b74">▣</text>
+<text x="104" y="385" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" font-weight="400" fill="#777970">Sample vault</text>
+<rect x="57" y="631" width="196" height="66" rx="13" fill="#f8f8f5"/>
+<text x="71" y="657" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="#2b2c2d">Stored on this Mac</text>
+<text x="71" y="678" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="400" fill="#7a7c74">Encrypted while locked</text>
+<text x="70" y="734" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="16" font-weight="400" fill="#777970">⚙</text>
+<text x="104" y="734" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="400" fill="#6b6d65">Preferences</text>
+<text x="306" y="102" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="27" font-weight="650" fill="#2b2c2d">Files</text>
+<text x="306" y="128" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="400" fill="#74766e">Demo vault</text>
+<rect x="1030" y="82" width="182" height="31" rx="10" fill="#f0eee8"/>
+<text x="1044" y="102" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="600" fill="#73746c">DEMO WORKSPACE</text>
+<path d="M274 153h970" stroke="#e2e2dc"/>
+<text x="306" y="187" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="24" font-weight="400" fill="#777970">‹</text>
+<text x="340" y="187" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="24" font-weight="400" fill="#b2b4ac">›</text>
+<text x="382" y="185" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="#2b2c2d">All files</text>
+<rect x="306" y="213" width="257" height="37" rx="11" fill="#fff" stroke="#dfdfd7"/>
+<text x="322" y="237" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="19" font-weight="400" fill="#7e8078">⌕</text>
+<text x="349" y="236" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="400" fill="#92948b">Search filenames</text>
+<rect x="773" y="213" width="72" height="37" rx="11" fill="#eeefe9"/>
+<text x="786" y="238" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="18" font-weight="400" fill="#87897f">☷</text>
+<rect x="808" y="217" width="32" height="29" rx="8" fill="#fff"/>
+<text x="816" y="237" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="17" font-weight="400" fill="#2b2c2d">▦</text>
+<rect x="860" y="213" width="44" height="37" rx="11" fill="#fff" stroke="#dfdfd7"/>
+<text x="875" y="237" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="17" font-weight="400" fill="#2b2c2d">↑</text>
+<rect x="916" y="213" width="126" height="37" rx="11" fill="#fff" stroke="#dfdfd7"/>
+<text x="934" y="236" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="400" fill="#2b2c2d">+  New folder</text>
+<rect x="1054" y="213" width="158" height="37" rx="11" fill="#e9aa3a"/>
+<text x="1101" y="236" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="#2b2c2d">+  Import</text>
+<rect x="306" y="284" width="216" height="254" rx="16" fill="#fff" stroke="#e3e3dc"/>
+<rect x="321" y="299" width="186" height="167" rx="11" fill="#f5f5f0"/>
+<rect x="367" y="315" width="94" height="132" rx="5" fill="#fff" stroke="#e0e1d9"/>
+<rect x="379" y="333" width="42" height="5" rx="2" fill="#b4c1ad"/>
+<rect x="379" y="351" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="379" y="361" width="61" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="379" y="371" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="379" y="381" width="47" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="379" y="391" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="379" y="401" width="57" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="379" y="411" width="64" height="3" rx="1" fill="#d9dcd3"/>
+<text x="321" y="493" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="#2b2c2d">Travel notes.txt</text>
+<text x="321" y="514" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="400" fill="#7a7c73">Text document</text>
+<rect x="536" y="284" width="216" height="254" rx="16" fill="#eee8da" stroke="#d2bb8e"/>
+<rect x="551" y="299" width="186" height="167" rx="11" fill="#f5f5f0"/>
+<rect x="597" y="315" width="94" height="132" rx="5" fill="#fff" stroke="#e0e1d9"/>
+<rect x="609" y="333" width="42" height="5" rx="2" fill="#dfbd7b"/>
+<rect x="609" y="351" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="609" y="361" width="61" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="609" y="371" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="609" y="381" width="47" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="609" y="391" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="609" y="401" width="57" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="609" y="411" width="64" height="3" rx="1" fill="#d9dcd3"/>
+<text x="609" y="431" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="9" font-weight="600" fill="#9a8151">PDF</text>
+<text x="551" y="493" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="#2b2c2d">Example receipt.pdf</text>
+<text x="551" y="514" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="400" fill="#7a7c73">PDF document</text>
+<rect x="766" y="284" width="216" height="254" rx="16" fill="#fff" stroke="#e3e3dc"/>
+<rect x="781" y="299" width="186" height="167" rx="11" fill="#f5f5f0"/>
+<rect x="812" y="323" width="124" height="110" rx="9" fill="#e1e7df"/>
+<circle cx="907" cy="347" r="11" fill="#edc56d"/>
+<path d="M812 413l38 -46 24 29 22 -18 40 35v20H812z" fill="#94a58f"/>
+<text x="781" y="493" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="#2b2c2d">Sample image.png</text>
+<text x="781" y="514" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="400" fill="#7a7c73">Image · illustration</text>
+<rect x="996" y="284" width="216" height="254" rx="16" fill="#fff" stroke="#e3e3dc"/>
+<rect x="1011" y="299" width="186" height="167" rx="11" fill="#f5f5f0"/>
+<rect x="1057" y="315" width="94" height="132" rx="5" fill="#fff" stroke="#e0e1d9"/>
+<rect x="1069" y="333" width="42" height="5" rx="2" fill="#b4c1ad"/>
+<rect x="1069" y="351" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="1069" y="361" width="61" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="1069" y="371" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="1069" y="381" width="47" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="1069" y="391" width="68" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="1069" y="401" width="57" height="3" rx="1" fill="#d9dcd3"/>
+<rect x="1069" y="411" width="64" height="3" rx="1" fill="#d9dcd3"/>
+<text x="1011" y="493" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="#2b2c2d">Reading list.md</text>
+<text x="1011" y="514" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="400" fill="#7a7c73">Markdown document</text>
+<path d="M274 706h970" stroke="#e1e1d9"/>
+<text x="307" y="738" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="400" fill="#7b7d73">4 demo files · Illustrated preview</text>
+<text x="1024" y="737" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" font-weight="400" fill="#7c7e75">−</text>
+<path d="M1048 732h123" stroke="#c4c8bc"/>
+<circle cx="1111" cy="732" r="5" fill="#9a9f91"/>
+<text x="1188" y="737" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="14" font-weight="400" fill="#7c7e75">+</text>
+<text x="429" y="785" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="500" fill="#85877e">DRAWN FROM CODE · FICTIONAL FILENAMES · NO PERSONAL FILES</text>
+</svg>

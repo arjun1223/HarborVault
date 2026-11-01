@@ -22,3 +22,13 @@
 !/Resources/Licenses/
 !/Resources/Licenses/InstrumentSans-OFL.txt
 !/Resources/Licenses/Manrope-OFL.txt
+!/CHANGELOG.md
+!/RELEASING.md
+!/docs/
+!/docs/USER_GUIDE.md
+!/assets/
+!/assets/icon.png
+!/assets/previews/
+!/assets/previews/workspace.svg
+!/Tools/PackageRelease.sh
+!/Tools/MakePreview.py
