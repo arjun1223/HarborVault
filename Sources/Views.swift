@@ -7,12 +7,6 @@ private let accent = HarborDesign.amber
 private let ink = Color.primary
 private let panel = HarborDesign.surface
 
-final class DropCollector: @unchecked Sendable {
-    private let lock = NSLock(); private var values: [URL] = []
-    func add(_ url: URL) { lock.lock(); defer { lock.unlock() }; values.append(url) }
-    var urls: [URL] { lock.lock(); defer { lock.unlock() }; return values }
-}
-
 struct ItemMenu: View {
     @EnvironmentObject var model: AppModel
     let item: VaultItem
@@ -93,7 +87,7 @@ struct PasscodeSettingsView: View {
 }
 
 struct ImportSheetItem: Identifiable {
-    var id: UUID { result.receipts.first?.id ?? UUID() }
+    var id: UUID { result.id }
     let result: ImportResult
 }
 struct ImportCompleteView: View {
@@ -103,10 +97,15 @@ struct ImportCompleteView: View {
         VStack(alignment: .leading, spacing: 18) {
             Image(systemName: "checkmark.circle.fill").font(.harbor(size: 28)).foregroundStyle(HarborDesign.green)
             Text("Import complete").font(.harbor(size: 22, weight: .semibold, design: .rounded))
-            Text("\(result.importedFiles) file\(result.importedFiles == 1 ? "" : "s") saved inside your vault. You can now move the original items to Trash.").font(.harbor(size: 12)).foregroundStyle(.secondary)
-            ScrollView { VStack(alignment: .leading, spacing: 7) { ForEach(result.receipts) { receipt in Label(receipt.source.lastPathComponent, systemImage: "checkmark.circle").font(.harbor(size: 11)).lineLimit(1) } } }.frame(maxHeight: 110)
-            Text("Items in Trash are still readable until you empty it. Other copies, cloud versions, and backups are separate.").font(.harbor(size: 11)).foregroundStyle(.secondary).padding(12).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
-            HStack { Button("Keep originals") { model.importResult = nil }; Spacer(); Button("Move originals to Trash") { model.trashOriginals(result) }.buttonStyle(HarborButtonStyle(primary: true)) }
+            Text("\(result.importedFiles) file\(result.importedFiles == 1 ? "" : "s") encrypted and verified inside your vault.").font(.harbor(size: 12)).foregroundStyle(.secondary)
+            if result.receipts.isEmpty {
+                Text("Temporary import copies have been removed. Copies kept by the source app are separate.").font(.harbor(size: 11)).foregroundStyle(.secondary)
+                HStack { Spacer(); Button("Done") { model.importResult = nil }.buttonStyle(HarborButtonStyle(primary: true)) }
+            } else {
+                ScrollView { VStack(alignment: .leading, spacing: 7) { ForEach(result.receipts) { receipt in Label(receipt.source.lastPathComponent, systemImage: "checkmark.circle").font(.harbor(size: 11)).lineLimit(1) } } }.frame(maxHeight: 110)
+                Text("You can move these Finder originals to Trash. Items in Trash stay readable until emptied. Other copies and backups are separate.").font(.harbor(size: 11)).foregroundStyle(.secondary).padding(12).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                HStack { Button("Keep originals") { model.importResult = nil }; Spacer(); Button("Move originals to Trash") { model.trashOriginals(result) }.buttonStyle(HarborButtonStyle(primary: true)) }
+            }
         }.padding(32).frame(width: 490).background(HarborDesign.surface)
     }
 }

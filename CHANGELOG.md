@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.1
+
+- Select and copy recognized text directly on images in either preview.
+- Publishes the on-device OCR and screenshot-drag improvements from the previous local builds.
+
+## 1.3.0 — Local build
+
+- Add a **Text** button to full and small previews for local image and scanned-PDF OCR using Apple Vision.
+- Select or copy recognized text, with per-page PDF progress, page separators, cancellation, and a Back action.
+- Keep recognition results in memory and clear them on file changes, preview dismissal, viewer focus locking, or vault locking. Ignore late results after cancellation.
+- Preserve the original encrypted file and catalog. Copying text deliberately writes to the system clipboard.
+
+Validation: 258 automated checks using generated fixtures and isolated test pasteboards. Recognition, image orientation, scanned PDF page ordering, cancellation, privacy clearing, and clipboard action were checked without personal files or app windows.
+
+## 1.2.1 — Local build
+
+- Accept floating macOS screenshot thumbnails through native file promises and raw image drops from other apps, alongside existing Finder file/folder drops.
+- Preserve original image bytes, clean up private temporary import copies, and offer the original-removal action only for real Finder files.
+- Report failed or unfinished screenshot deliveries and cancel pending imports when the vault locks.
+- Keep completion-sheet identity stable for screenshot-only imports.
+
+Validation: 229 automated checks with generated fixtures and isolated test pasteboards. A real interactive screenshot drag has not been exercised under the owner's privacy restriction.
+
 ## 1.2.0 — Public Preview
 
 The first public Harbor Vault download for Apple silicon Macs running macOS 14 or newer.

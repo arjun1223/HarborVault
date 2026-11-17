@@ -248,9 +248,11 @@ struct BrowserView: View {
             }.font(D.font(12, .medium, scale: model.textScale)).padding(.bottom, 21)
             ViewThatFits(in: .horizontal) { toolbar(compact: false); toolbar(compact: true) }.padding(.bottom, 22)
             if model.viewingRecentlyDeleted { TrashRetentionBar().padding(.bottom, 16) }
-            if model.visible.isEmpty { emptyState }
-            else if model.grid { gridView }
-            else { tableView }
+            NativeDropRegion(model: model, targeted: $dropTarget) {
+                if model.visible.isEmpty { emptyState }
+                else if model.grid { gridView }
+                else { tableView }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
             HStack(spacing: 9) {
                 if model.selectionIDs.isEmpty { Text("Shift/⌘-click to select · Space for Quick View") }
                 else { Text("\(model.selectionIDs.count) selected · Space for Quick View") }
@@ -263,7 +265,6 @@ struct BrowserView: View {
             }.font(D.font(10)).foregroundStyle(.secondary).padding(.top, 16)
         }.padding(.horizontal, 28).padding(.top, 25).padding(.bottom, 20).frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay { if dropTarget { RoundedRectangle(cornerRadius: 18).strokeBorder(D.amber, style: StrokeStyle(lineWidth: 2, dash: [7])).background(D.amber.opacity(0.04), in: RoundedRectangle(cornerRadius: 18)).padding(12).allowsHitTesting(false) } }
-            .onDrop(of: [UTType.fileURL.identifier], isTargeted: $dropTarget, perform: receiveDrop)
     }
     private func toolbar(compact: Bool) -> some View {
         HStack(spacing: 10) {
@@ -311,7 +312,7 @@ struct BrowserView: View {
             Spacer()
             Image(systemName: model.query.isEmpty ? model.viewingRecentlyDeleted ? "trash" : "folder.badge.plus" : "magnifyingglass").font(.system(size: 30, weight: .light)).foregroundStyle(.secondary).padding(.bottom, 5)
             Text(model.query.isEmpty ? model.viewingRecentlyDeleted ? "No recently deleted items" : "No files here yet" : "No matching files").font(D.heading(19, .semibold, scale: model.textScale)).tracking(-0.4)
-            Text(model.query.isEmpty ? model.viewingRecentlyDeleted ? "Deleted items from this vault stay here until restored or permanently removed." : "Import files or drop a folder into this window.\nYour originals stay put until you choose to remove them." : "Search looks at filenames and folder names in this vault.")
+            Text(model.query.isEmpty ? model.viewingRecentlyDeleted ? "Deleted items from this vault stay here until restored or permanently removed." : "Drop files, folders, or a screenshot thumbnail here.\nFinder originals stay put until you choose to remove them." : "Search looks at filenames and folder names in this vault.")
                 .font(D.font(12, scale: model.textScale)).foregroundStyle(.secondary).multilineTextAlignment(.center).lineSpacing(4)
             if model.query.isEmpty && !model.viewingRecentlyDeleted { Button { model.pickImport() } label: { Label("Import files", systemImage: "plus") }.buttonStyle(HarborButtonStyle(primary: true)).padding(.top, 9).disabled(model.busy) }
             Spacer()
@@ -326,21 +327,6 @@ struct BrowserView: View {
         var names: [String] = []; var id = item.parent
         while let current = id, let parent = model.manifest.items.first(where: { $0.id == current }) { names.insert(parent.name, at: 0); id = parent.parent }
         return names.isEmpty ? "All files" : names.joined(separator: " / ")
-    }
-    private func receiveDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard !model.busy, model.unlocked, !model.viewingRecentlyDeleted else { return false }
-        let group = DispatchGroup(); let collector = DropCollector()
-        for provider in providers {
-            group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { value, _ in
-                defer { group.leave() }
-                if let data = value as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) { collector.add(url) }
-                else if let url = value as? URL { collector.add(url) }
-            }
-        }
-        let vaultID = model.selectedVaultID
-        group.notify(queue: .main) { if model.unlocked, model.selectedVaultID == vaultID { model.importFiles(collector.urls) } }
-        return true
     }
 }
 

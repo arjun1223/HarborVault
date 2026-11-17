@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import PDFKit
+import VisionKit
 
 @MainActor final class QuickViewController: NSObject, NSWindowDelegate {
     private weak var model: AppModel?
@@ -71,6 +72,8 @@ struct QuickViewContent: View {
                 Text(model.quickViewItem?.name ?? "Quick View").font(D.font(13, .medium)).lineLimit(1)
                 Spacer()
                 Text(model.quickViewPosition).font(D.font(11)).foregroundStyle(.secondary)
+                RecognizedTextButton(session: model.viewerTextRecognition,
+                    enabled: !model.quickViewLoading && model.preview.map(TextRecognition.supports) == true) { model.toggleRecognizedText() }
                 HStack(spacing: 12) {
                     Button { model.previewZoom = max(0.25, model.previewZoom / 1.25) } label: { Image(systemName: "minus.magnifyingglass") }.buttonStyle(.plain).help("Zoom out")
                     Button { model.previewZoom = 1 } label: { Text("Fit").font(D.font(11)) }.buttonStyle(.plain)
@@ -99,7 +102,7 @@ struct QuickViewContent: View {
                         Text(item.name).font(D.heading(22))
                         Text("\(model.childrenInPreview(of: item).count) items").font(D.font(12)).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let content = model.preview { QuickViewDocument(content: content, zoom: $model.previewZoom) }
+                } else if let content = model.preview { OCRPreviewDocument(content: content, zoom: $model.previewZoom, textSession: model.viewerTextRecognition) }
                 else {
                     VStack(spacing: 15) {
                         Image(systemName: "doc").font(.system(size: 42, weight: .light)).foregroundStyle(.secondary)
@@ -125,10 +128,11 @@ struct QuickViewContent: View {
 struct QuickViewDocument: View {
     let content: PreviewContent
     @Binding var zoom: Double
+    var imageAnalysis: ImageAnalysis?
     var body: some View {
         Group {
             if (content.item.name as NSString).pathExtension.lowercased() == "pdf", let document = PDFDocument(data: content.data) { ZoomedPDFView(document: document, id: content.item.id, zoom: $zoom) }
-            else if let image = NSImage(data: content.data) { ZoomedImageView(image: image, id: content.item.id, zoom: $zoom) }
+            else if let image = NSImage(data: content.data) { ZoomedImageView(image: image, id: content.item.id, zoom: $zoom, imageAnalysis: imageAnalysis) }
             else if content.data.count <= 2 * 1024 * 1024, let text = String(data: content.data, encoding: .utf8), !text.contains("\0") {
                 ScrollView([.vertical, .horizontal]) { Text(text).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .topLeading).padding(26) }
             } else {

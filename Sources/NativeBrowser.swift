@@ -30,6 +30,7 @@ struct NativeFileBrowser: NSViewRepresentable {
         // Installing a modern layout replaces AppKit's legacy collection core.
         // Register cells afterward so the new core owns their registration.
         collection.register(FileCollectionItem.self, forItemWithIdentifier: FileCollectionItem.identifier)
+        collection.unregisterDraggedTypes(); scroll.unregisterDraggedTypes()
         scroll.documentView = collection
         coordinator.collection = collection
         return scroll

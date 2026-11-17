@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import PDFKit
+import VisionKit
 
 enum PreviewZoom {
     static let minimum = 0.25
@@ -25,6 +26,7 @@ enum PreviewZoom {
 
 @MainActor final class PinchImageScrollView: NSScrollView {
     let imageView = NSImageView()
+    private var textOverlay: ImageAnalysisOverlayView?
     var representedID: UUID?
     var onZoom: ((Double) -> Void)?
     override init(frame frameRect: NSRect) {
@@ -44,6 +46,32 @@ enum PreviewZoom {
         guard let image = imageView.image else { return }
         let fitted = PreviewZoom.fit(image: image.size, viewport: contentView.frame.size)
         if imageView.frame.size != fitted { imageView.setFrameSize(fitted); reflectScrolledClipView(contentView) }
+    }
+    func setImageAnalysis(_ analysis: ImageAnalysis?) {
+        guard let analysis else {
+            textOverlay?.resetSelection()
+            textOverlay?.analysis = nil
+            textOverlay?.removeFromSuperview()
+            textOverlay = nil
+            return
+        }
+        if textOverlay?.analysis === analysis { return }
+        let overlay = textOverlay ?? ImageAnalysisOverlayView(frame: imageView.bounds)
+        overlay.trackingImageView = imageView
+        overlay.autoresizingMask = [.width, .height]
+        overlay.preferredInteractionTypes = .textSelection
+        if overlay.superview == nil { imageView.addSubview(overlay) }
+        overlay.analysis = analysis
+        textOverlay = overlay
+    }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "c",
+           let selected = textOverlay?.selectedText, !selected.isEmpty {
+            NSPasteboard.general.clearContents()
+            return NSPasteboard.general.setString(selected, forType: .string)
+        }
+        return super.performKeyEquivalent(with: event)
     }
     func setControlZoom(_ value: Double) {
         let next = PreviewZoom.clamp(value)
@@ -67,6 +95,7 @@ struct ZoomedImageView: NSViewRepresentable {
     let image: NSImage
     let id: UUID
     @Binding var zoom: Double
+    var imageAnalysis: ImageAnalysis?
     func makeNSView(context: Context) -> PinchImageScrollView { PinchImageScrollView() }
     func updateNSView(_ view: PinchImageScrollView, context: Context) {
         if view.representedID != id {
@@ -74,9 +103,11 @@ struct ZoomedImageView: NSViewRepresentable {
         }
         let binding = $zoom
         view.onZoom = { value in if abs(binding.wrappedValue - value) > 0.001 { binding.wrappedValue = value } }
+        view.setImageAnalysis(imageAnalysis)
         view.setControlZoom(zoom)
     }
     static func dismantleNSView(_ view: PinchImageScrollView, coordinator: ()) {
+        view.setImageAnalysis(nil)
         view.onZoom = nil; view.imageView.image = nil; view.documentView = nil
     }
 }
@@ -122,7 +153,7 @@ struct ZoomedPDFView: NSViewRepresentable {
         init(_ binding: Binding<Double>) { self.binding = binding }
         func observe(_ view: PDFView) {
             observer = NotificationCenter.default.addObserver(forName: .PDFViewScaleChanged, object: view, queue: .main) { [weak self, weak view] _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self, weak view] in
                     guard let self, let view, view.document != nil, !self.applying, self.documentID != nil else { return }
                     let fit = view.scaleFactorForSizeToFit
                     guard fit > 0 else { return }

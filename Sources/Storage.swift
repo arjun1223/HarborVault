@@ -53,6 +53,7 @@ struct ImportReceipt: Identifiable {
     let importedIDs: [UUID]
 }
 struct ImportResult {
+    let id = UUID()
     let manifest: VaultManifest
     let receipts: [ImportReceipt]
     let importedFiles: Int

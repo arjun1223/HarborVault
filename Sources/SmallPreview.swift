@@ -51,6 +51,8 @@ struct SmallPreviewContent: View {
             HStack(spacing: 9) {
                 Text(model.smallPreviewItem?.name ?? "Preview").font(D.font(12, .medium)).lineLimit(1)
                 Spacer(minLength: 5)
+                RecognizedTextButton(session: model.smallTextRecognition,
+                    enabled: !model.smallPreviewLoading && model.smallPreview.map(TextRecognition.supports) == true) { model.toggleRecognizedText(small: true) }
                 Button { model.closeSmallPreview() } label: { Image(systemName: "xmark").font(.system(size: 10)) }.buttonStyle(.plain).help("Dismiss preview")
             }.padding(14)
             Divider()
@@ -63,7 +65,7 @@ struct SmallPreviewContent: View {
                         Text("\(model.childrenInPreview(of: item).count) items").font(D.font(11)).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let content = model.smallPreview {
-                    QuickViewDocument(content: content, zoom: $zoom)
+                    OCRPreviewDocument(content: content, zoom: $zoom, textSession: model.smallTextRecognition, compact: true)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: model.smallPreviewItem?.symbol ?? "doc").font(.system(size: 40, weight: .light)).foregroundStyle(.secondary)

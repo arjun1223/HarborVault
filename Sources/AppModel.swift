@@ -33,6 +33,8 @@ import UniformTypeIdentifiers
     @Published var quickViewItems: [VaultItem] = []
     @Published var quickViewIsGroup = false
     @Published var previewZoom: Double = 1
+    let viewerTextRecognition = RecognizedTextSession()
+    let smallTextRecognition = RecognizedTextSession()
     @Published var quickViewError: String?
     @Published var quickViewLoading = false
     @Published var viewerLocked = false
@@ -93,19 +95,19 @@ import UniformTypeIdentifiers
     init(root: URL? = nil) {
         do {
             storage = try VaultStorage(root: root ?? VaultStorage.defaultRoot)
-            if root == nil { VaultShareFiles.removeStaleCopies() }
+            if root == nil { VaultShareFiles.removeStaleCopies(); FileDropStaging.removeStaleCopies() }
         }
         catch { storage = nil; self.error = error.localizedDescription }
         reload()
         if storage != nil, vaults.isEmpty { showCreate = true }
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.lock() } })
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.lock() } })
-        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.closeSmallPreview() } })
-        observers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.lock() } })
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor [weak self] in self?.lock() } })
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor [weak self] in self?.lock() } })
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor [weak self] in self?.closeSmallPreview() } })
+        observers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in Task { @MainActor [weak self] in self?.lock() } })
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel, .mouseMoved]) { [weak self] event in
-            Task { @MainActor in self?.lastActivity = Date() }; return event
+            Task { @MainActor [weak self] in self?.lastActivity = Date() }; return event
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.checkIdle() } }
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor [weak self] in self?.checkIdle() } }
     }
     var header: VaultHeader? { vaults.first { $0.id == selectedVaultID } }
     var selectedItem: VaultItem? { manifest.items.first { $0.id == selection } }
@@ -302,6 +304,7 @@ import UniformTypeIdentifiers
     }
     func showQuickView(_ item: VaultItem, browseVisible: Bool = false) {
         guard unlocked else { return }
+        viewerTextRecognition.clear()
         closeSmallPreview()
         if quickViewItem == nil {
             quickViewIsGroup = selectionIDs.count > 1
@@ -344,6 +347,7 @@ import UniformTypeIdentifiers
         showQuickView(item)
     }
     func closeQuickView() {
+        viewerTextRecognition.clear()
         viewerAuthToken = UUID(); viewerAuthJob?.cancel(); viewerAuthJob = nil
         viewerAuthContext?.invalidate(); viewerAuthContext = nil
         viewerLocked = false; viewerAuthenticating = false; viewerAuthError = nil
@@ -352,6 +356,7 @@ import UniformTypeIdentifiers
         quickViewItem = nil; quickViewItems = []; quickViewIsGroup = false; preview = nil; quickViewError = nil; quickViewLoading = false; previewZoom = 1
     }
     func previewLostFocus() {
+        viewerTextRecognition.clear()
         guard quickViewItem != nil, !viewerAuthenticating else { return }
         previewToken = UUID(); previewJob?.cancel(); previewJob = nil
         preview = nil; quickViewLoading = false; quickViewError = nil
@@ -418,9 +423,22 @@ import UniformTypeIdentifiers
         }
     }
     func closeSmallPreview() {
+        smallTextRecognition.clear()
         smallPreviewToken = UUID(); smallPreviewJob?.cancel(); smallPreviewJob = nil
         smallPreviewController?.close(); smallPreviewController = nil
         smallPreviewItem = nil; smallPreview = nil; smallPreviewLoading = false; smallPreviewError = nil
+    }
+    func toggleRecognizedText(small: Bool = false) {
+        guard unlocked else { return }
+        if small {
+            guard let content = smallPreview, content.item.id == smallPreviewItem?.id, !smallPreviewLoading,
+                  TextRecognition.supports(content) else { return }
+            smallTextRecognition.toggle(content)
+        } else {
+            guard !viewerLocked, let content = preview, content.item.id == quickViewItem?.id, !quickViewLoading,
+                  TextRecognition.supports(content) else { return }
+            viewerTextRecognition.toggle(content)
+        }
     }
     func pickImport() {
         guard unlocked, !busy, !viewingRecentlyDeleted else { return }
@@ -430,9 +448,24 @@ import UniformTypeIdentifiers
         panel.begin { response in if response == .OK { Task { @MainActor in self.importFiles(panel.urls) } } }
     }
     func importFiles(_ urls: [URL]) {
-        guard !urls.isEmpty, unlocked, !viewingRecentlyDeleted, let storage, let header, let key else { return }
+        guard !urls.isEmpty, !busy, unlocked, !viewingRecentlyDeleted, let storage, let header, let key else { return }
         let parent = folderID; let manifest = manifest
         run("Encrypting and verifying imports…", operation: { try storage.importSources(urls, parent: parent, manifest: manifest, vaultID: header.id, key: key) }) { result in
+            self.manifest = result.manifest; self.importResult = result
+        }
+    }
+    var canImportDrop: Bool { unlocked && !busy && !viewingRecentlyDeleted && importResult == nil }
+    func importDrop(_ request: FileDropRequest, temporaryBase: URL = FileDropStaging.base) {
+        guard canImportDrop, let storage, let header, let key else { return }
+        let parent = folderID; let snapshot = manifest
+        run("Receiving and encrypting dropped files…", operation: {
+            let staging = try request.prepare(temporaryBase: temporaryBase)
+            defer { staging.remove() }
+            try Task.checkCancellation()
+            let originals = staging.originalURLs
+            let result = try storage.importSources(staging.urls, parent: parent, manifest: snapshot, vaultID: header.id, key: key)
+            return ImportResult(manifest: result.manifest, receipts: result.receipts.filter { originals.contains($0.source.standardizedFileURL) }, importedFiles: result.importedFiles)
+        }) { result in
             self.manifest = result.manifest; self.importResult = result
         }
     }

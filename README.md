@@ -14,7 +14,7 @@
 
 ## Download
 
-**[Download Harbor Vault for Mac](https://github.com/arjun1223/HarborVault/releases/latest)** from the latest release. Open `HarborVault-1.2.0-macOS-arm64.dmg`, drag **Harbor Vault.app** into **Applications**, then eject the disk image and open the app.
+**[Download Harbor Vault for Mac](https://github.com/arjun1223/HarborVault/releases/latest)** from the latest release. Open `HarborVault-1.3.1-macOS-arm64.dmg`, drag **Harbor Vault.app** into **Applications**, then eject the disk image and open the app.
 
 The download supports **Apple silicon Macs running macOS 14 or newer**. Intel Macs are not supported by this build. The release includes `SHA256SUMS.txt` to verify the DMG download.
 
@@ -29,9 +29,10 @@ This is an early public build, **ad-hoc signed and not Apple-notarized**. macOS 
 | Familiar browsing | List and grid views, folders, filename search, back/forward navigation |
 | Selection | Shift/Command selection, keyboard navigation, and drag-to-select rectangles |
 | Previews | Space for a small preview; double-click for a separate viewer with a selected-file sidebar |
+| Text recognition | Select and copy text directly from images, or extract text from scanned PDFs |
 | Image and PDF zoom | Two-finger pinch, zoom buttons, Fit, and panning |
 | Private viewer | Leaving the full viewer locks that window; closing previews keeps the vault open |
-| Verified import | Encrypt and verify a copy before offering to move Finder originals to Trash |
+| Verified import | Finder files/folders, direct screenshot thumbnails, and image drops; verify before offering to trash Finder originals |
 | Recently Deleted | Per-vault recovery, adjustable retention, individual deletion dates, and restore locations |
 | Vault transfers | Move one copy or duplicate into another vault after destination verification |
 | Sharing | Fresh verification before the native AirDrop, Messages, or other Mac sharing picker |
@@ -61,7 +62,7 @@ The public repository and release contain app code, build tools, documentation, 
 
 ## Build from source
 
-Install the full Xcode application, then:
+Install Xcode or compatible Apple Command Line Tools, then:
 
 ```sh
 git clone https://github.com/arjun1223/HarborVault.git
@@ -69,9 +70,9 @@ cd HarborVault
 bash build.sh
 ```
 
-The app is written to `output/Harbor Vault.app`. No third-party packages, API keys, or accounts are required. Font assets and their licenses are bundled locally. The scripts default to Xcode at `/Applications/Xcode.app/Contents/Developer`; set `DEVELOPER_DIR` if yours is elsewhere.
+The app is written to `output/Harbor Vault.app`. No third-party packages, API keys, or accounts are required. Font assets and their licenses are bundled locally. The scripts use Xcode if installed at the default location, otherwise they use the active developer tools. Set `DEVELOPER_DIR` to select a toolchain.
 
-Run the generated-fixture checks with `bash test.sh`. The 1.2.0 release source passed **190 automated checks**. Release assembly is documented in [RELEASING.md](RELEASING.md).
+Run the generated-fixture checks with `bash test.sh`. Release assembly is documented in [RELEASING.md](RELEASING.md).
 
 ## Updates and feedback
 

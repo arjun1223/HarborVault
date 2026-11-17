@@ -40,7 +40,7 @@ final class VaultShareFiles: @unchecked Sendable {
     }
 }
 
-@MainActor final class VaultShareSession: NSObject, @preconcurrency NSSharingServicePickerDelegate, NSSharingServiceDelegate {
+@MainActor final class VaultShareSession: NSObject, NSSharingServiceDelegate {
     private var files: VaultShareFiles?
     private var picker: NSSharingServicePicker?
     private var service: NSSharingService?
@@ -74,3 +74,9 @@ final class VaultShareFiles: @unchecked Sendable {
     }
 }
 
+
+#if compiler(>=6.0)
+extension VaultShareSession: @preconcurrency NSSharingServicePickerDelegate {}
+#else
+extension VaultShareSession: NSSharingServicePickerDelegate {}
+#endif

@@ -1,9 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-DEVELOPER_DIR_PATH="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-SWIFTC="$DEVELOPER_DIR_PATH/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
-SDK="$DEVELOPER_DIR_PATH/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
+SWIFTC="$(/usr/bin/xcrun --find swiftc)"
+SDK="${SDKROOT:-$(/usr/bin/xcrun --sdk macosx --show-sdk-path)}"
 DESTINATION="${HARBOR_APP_OUTPUT:-output/Harbor Vault.app}"
 APP="output/.Harbor-build-$$-$RANDOM.app"
 trap 'if [ -d "$APP" ]; then rm -rf "$APP"; fi' EXIT

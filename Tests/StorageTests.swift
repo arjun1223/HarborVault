@@ -2,6 +2,11 @@ import Foundation
 import CryptoKit
 import LocalAuthentication
 import AppKit
+import VisionKit
+import UniformTypeIdentifiers
+import CoreText
+import ImageIO
+import PDFKit
 
 private var checks = 0
 private func check(_ condition: @autoclosure () throws -> Bool, _ label: String) throws {
@@ -22,6 +27,14 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("HarborVault-tests-" + UUID().uuidString)
         try VaultStorage.directory(temp)
         defer { try? FileManager.default.removeItem(at: temp) }
+        if CommandLine.arguments.contains("--drops") {
+            try await dropChecks(root: temp.appendingPathComponent("drops"))
+            print("All screenshot-drop checks passed: \(checks)"); return
+        }
+        if CommandLine.arguments.contains("--ocr") {
+            try await ocrChecks(root: temp.appendingPathComponent("ocr"))
+            print("All OCR checks passed: \(checks)"); return
+        }
         let storage = try VaultStorage(root: temp.appendingPathComponent("vaults"))
         let sources = temp.appendingPathComponent("sources")
         try VaultStorage.directory(sources)
@@ -137,7 +150,222 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         try zoomChecks()
         try await recoveryChecks(root: temp.appendingPathComponent("recovery"))
         try await recoveryModelChecks(root: temp.appendingPathComponent("recovery-model"))
+        try await dropChecks(root: temp.appendingPathComponent("drops"))
+        try await ocrChecks(root: temp.appendingPathComponent("ocr"))
         print("All \(checks) checks passed.")
+    }
+
+    @MainActor static func ocrChecks(root: URL) async throws {
+        try VaultStorage.directory(root)
+        func content(_ data: Data, _ name: String, id: UUID = UUID(), folder: Bool = false) -> PreviewContent {
+            PreviewContent(item: VaultItem(id: id, parent: nil, name: name, isFolder: folder, size: Int64(data.count), created: Date(), modified: Date(), digest: nil), data: data)
+        }
+        func makeImage(_ lines: [String]) throws -> CGImage {
+            let context = CGContext(data: nil, width: 1400, height: 500, bitsPerComponent: 8, bytesPerRow: 5600, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 1400, height: 500))
+            for (index, value) in lines.enumerated() {
+                let string = CFAttributedStringCreate(nil, value as CFString, [kCTFontAttributeName: CTFontCreateWithName("Helvetica" as CFString, 66, nil), kCTForegroundColorAttributeName: CGColor(gray: 0, alpha: 1)] as CFDictionary)!
+                context.textPosition = CGPoint(x: 65, y: 330 - index * 115)
+                CTLineDraw(CTLineCreateWithAttributedString(string), context)
+            }
+            return context.makeImage()!
+        }
+        func png(_ image: CGImage, orientation: Int? = nil) throws -> Data {
+            let data = NSMutableData()
+            let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)!
+            let properties = orientation.map { [kCGImagePropertyOrientation: $0] as CFDictionary }
+            CGImageDestinationAddImage(destination, image, properties)
+            guard CGImageDestinationFinalize(destination) else { throw VaultError.message("Generated OCR fixture could not be encoded.") }
+            return data as Data
+        }
+        let image = try makeImage(["HARBOR VAULT OCR 2468", "LOCAL TEXT EXAMPLE"])
+        let imageContent = content(try png(image), "Generated screenshot.png")
+        try check(TextRecognition.supports(imageContent), "OCR is available for a supported image preview")
+        let result = try await Task.detached { try TextRecognition.recognize(imageContent) }.value
+        try check(result.pages.count == 1 && result.text.uppercased().contains("HARBOR VAULT OCR 2468"), "Vision recognizes text from a generated image")
+        try check(result.text.range(of: "HARBOR")!.lowerBound < result.text.range(of: "LOCAL")!.lowerBound, "recognized image lines retain top-to-bottom reading order")
+        let rotatedContext = CGContext(data: nil, width: 500, height: 1400, bitsPerComponent: 8, bytesPerRow: 2000, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        rotatedContext.translateBy(x: 0, y: 1400); rotatedContext.rotate(by: -.pi / 2)
+        rotatedContext.draw(image, in: CGRect(x: 0, y: 0, width: 1400, height: 500))
+        let oriented = content(try png(rotatedContext.makeImage()!, orientation: 8), "Oriented screenshot.png")
+        let orientationResult = try await Task.detached { try TextRecognition.recognize(oriented) }.value
+        try check(orientationResult.text.uppercased().contains("HARBOR VAULT OCR 2468"), "OCR honors image orientation metadata before recognizing text")
+        let blank = content(try png(makeImage([])), "Blank.png")
+        let empty = try await Task.detached { try TextRecognition.recognize(blank) }.value
+        try check(empty.isEmpty && empty.text.isEmpty, "images without text produce a clean empty result")
+        let invalid = content(Data("not an image".utf8), "File.bin")
+        try check(!TextRecognition.supports(invalid), "unsupported file types do not offer OCR")
+        try rejects("OCR rejects unsupported input explicitly") { _ = try TextRecognition.recognize(invalid) }
+        try check(!TextRecognition.supports(content(imageContent.data, "Folder", folder: true)), "folders do not offer OCR")
+        try rejects("malformed PDFs fail without a partial result") { _ = try TextRecognition.recognize(content(Data("%PDF-invalid".utf8), "Broken.pdf")) }
+        let cancelled = TextRecognitionCancellation(); cancelled.cancel()
+        try rejects("cancelled recognition stops before handling readable content") { _ = try TextRecognition.recognize(imageContent, cancellation: cancelled) }
+        let pdfData = NSMutableData(); var media = CGRect(x: 0, y: 0, width: 1000, height: 500)
+        let pdfContext = CGContext(consumer: CGDataConsumer(data: pdfData)!, mediaBox: &media, nil)!
+        for text in ["FIRST DOCUMENT PAGE 2468", "SECOND DOCUMENT PAGE 9753"] {
+            pdfContext.beginPDFPage(nil); pdfContext.draw(try makeImage([text]), in: CGRect(x: 0, y: 0, width: 1000, height: 357)); pdfContext.endPDFPage()
+        }
+        pdfContext.closePDF()
+        let pdfContent = content(pdfData as Data, "Generated scan.pdf")
+        try check((PDFDocument(data: pdfContent.data)?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "scanned-PDF fixtures have no existing selectable text layer")
+        let pages = OCRFixtureProgress()
+        let pdfResult = try await Task.detached { try TextRecognition.recognize(pdfContent, progress: { pages.add($0, $1) }) }.value
+        try check(pdfResult.pages.count == 2 && pdfResult.pages[0].text.contains("FIRST DOCUMENT PAGE 2468") && pdfResult.pages[1].text.contains("SECOND DOCUMENT PAGE 9753"), "OCR recognizes every scanned PDF page in order")
+        try check(pdfResult.text.contains("Page 1") && pdfResult.text.contains("Page 2"), "copied multi-page text includes page separators")
+        try check(pages.values == ["1/2", "2/2"], "multi-page recognition reports page progress")
+        let cancelPDF = TextRecognitionCancellation()
+        try rejects("multi-page OCR can be cancelled between pages") { _ = try TextRecognition.recognize(pdfContent, cancellation: cancelPDF, progress: { _, _ in cancelPDF.cancel() }) }
+        let manyData = NSMutableData(); let manyContext = CGContext(consumer: CGDataConsumer(data: manyData)!, mediaBox: &media, nil)!
+        for _ in 0...TextRecognition.pageLimit { manyContext.beginPDFPage(nil); manyContext.endPDFPage() }
+        manyContext.closePDF()
+        try rejects("oversized page counts are rejected before rasterization") { _ = try TextRecognition.recognize(content(manyData as Data, "Too many pages.pdf")) }
+        let session = RecognizedTextSession()
+        session.start(imageContent, worker: { _, _, report in report(1, 1); return result })
+        try await waitOCR(session)
+        try check(session.visible && !session.running && session.result == result, "Text mode presents selectable recognized text when recognition completes")
+        let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+        try check(session.copy(to: board) && board.string(forType: .string) == result.text, "the Copy action writes recognized text only to the requested test pasteboard")
+        session.toggle(imageContent)
+        try check(!session.visible && session.result == nil && !session.copy(to: board), "toggling Text off clears the result and disables copying")
+        session.start(imageContent, worker: { _, _, _ in throw VaultError.message("Generated OCR failure") })
+        try await waitOCR(session)
+        try check(session.error == "Generated OCR failure" && session.result == nil && !session.running, "recognition errors remain inside the text pane without a stale result")
+        session.start(imageContent, worker: { _, _, _ in Thread.sleep(forTimeInterval: 0.08); return result })
+        session.clear(); try await Task.sleep(nanoseconds: 130_000_000)
+        try check(!session.visible && session.result == nil && session.error == nil && session.progress.isEmpty, "late OCR completion cannot repopulate a cleared preview")
+        session.start(imageContent, worker: { _, _, _ in Thread.sleep(forTimeInterval: 0.08); return result })
+        session.start(pdfContent, worker: { _, _, _ in return pdfResult })
+        try await waitOCR(session); try await Task.sleep(nanoseconds: 130_000_000)
+        try check(session.result == pdfResult, "an earlier file's OCR cannot overwrite a later recognition result")
+        session.clear()
+        let model = AppModel(root: root.appendingPathComponent("store"))
+        model.create(name: "OCR fixture", passcode: "fixture recognition phrase", mac: false); try await wait(model)
+        let catalog = model.storage!.folder(model.header!.id).appendingPathComponent("catalog.sealed")
+        let originalCatalog = try Data(contentsOf: catalog)
+        model.quickViewItem = imageContent.item; model.preview = imageContent
+        model.toggleRecognizedText(); try await waitOCR(model.viewerTextRecognition)
+        try check((model.viewerTextRecognition.imageAnalysis?.transcript ?? model.viewerTextRecognition.result?.text)?.contains("HARBOR VAULT OCR 2468") == true, "the preview Text button starts local OCR for its current file")
+        model.previewLostFocus()
+        try check(model.viewerLocked && model.unlocked && !model.viewerTextRecognition.visible && model.viewerTextRecognition.result == nil && model.viewerTextRecognition.imageAnalysis == nil, "leaving a full viewer clears OCR and locks only that viewer")
+        model.preview = imageContent; model.toggleRecognizedText()
+        try check(!model.viewerTextRecognition.running && !model.viewerTextRecognition.visible, "a locked viewer cannot start OCR with stale preview bytes")
+        model.viewerLocked = false
+        model.viewerTextRecognition.start(imageContent, worker: { _, _, _ in result }); try await waitOCR(model.viewerTextRecognition)
+        model.smallPreviewItem = imageContent.item; model.smallPreview = imageContent
+        model.smallTextRecognition.start(imageContent, worker: { _, _, _ in result }); try await waitOCR(model.smallTextRecognition)
+        model.closeSmallPreview()
+        try check(model.unlocked && !model.smallTextRecognition.visible && model.viewerTextRecognition.visible, "dismissing small-preview text leaves the main vault and other viewer unchanged")
+        model.closeQuickView()
+        try check(model.unlocked && !model.viewerTextRecognition.visible && model.viewerTextRecognition.result == nil, "closing the full preview clears its OCR without locking the vault")
+        model.viewerTextRecognition.start(imageContent, worker: { _, _, _ in Thread.sleep(forTimeInterval: 0.08); return result })
+        model.smallTextRecognition.start(imageContent, worker: { _, _, _ in Thread.sleep(forTimeInterval: 0.08); return result })
+        model.lock(); try await Task.sleep(nanoseconds: 130_000_000)
+        try check(!model.unlocked && model.viewerTextRecognition.result == nil && model.smallTextRecognition.result == nil && !model.viewerTextRecognition.running && !model.smallTextRecognition.running, "locking the vault clears both OCR sessions and discards late results")
+        try check(try Data(contentsOf: catalog) == originalCatalog, "OCR never modifies the encrypted vault catalog or adds plaintext text files")
+    }
+    @MainActor static func waitOCR(_ session: RecognizedTextSession) async throws {
+        let deadline = Date().addingTimeInterval(25)
+        while session.running && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        guard !session.running else { throw VaultError.message("OCR fixture timed out") }
+    }
+
+    @MainActor static func dropChecks(root: URL) async throws {
+        try VaultStorage.directory(root)
+        let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 12, pixelsHigh: 8, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        memset(image.bitmapData!, 145, image.bytesPerRow * image.pixelsHigh)
+        let png = image.representation(using: .png, properties: [:])!
+        let tiff = image.tiffRepresentation!
+        let finder = root.appendingPathComponent("Finder image.png"); try png.write(to: finder)
+        let temporary = root.appendingPathComponent("staged")
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let item = NSPasteboardItem(); item.setData(png, forType: .png); item.setData(tiff, forType: .tiff)
+        board.writeObjects([item])
+        try check(FileDropRequest.supports(board), "image-only screenshot drags are accepted without a Finder URL")
+        let screenshot = try FileDropRequest.read(board)
+        try check(screenshot.sources.count == 1, "multiple image representations of one screenshot import once")
+        let prepared = try screenshot.prepare(temporaryBase: temporary)
+        try check(prepared.urls.count == 1 && prepared.originalURLs.isEmpty, "raw screenshot preparation creates no Finder-original receipts")
+        try check(try Data(contentsOf: prepared.urls[0]) == png, "dropped PNG bytes are preserved without re-encoding")
+        let mode = try FileManager.default.attributesOfItem(atPath: prepared.urls[0].path)[.posixPermissions] as! NSNumber
+        let folderMode = try FileManager.default.attributesOfItem(atPath: prepared.folder.path)[.posixPermissions] as! NSNumber
+        try check(mode.intValue == 0o600 && folderMode.intValue == 0o700, "temporary screenshot files and folders use owner-only permissions")
+        prepared.remove()
+        try check(!FileManager.default.fileExists(atPath: prepared.folder.path), "temporary screenshot preparation cleans up on completion")
+        let tiffPrepared = try FileDropRequest(sources: [.image(tiff)]).prepare(temporaryBase: temporary)
+        try check(try Data(contentsOf: tiffPrepared.urls[0]) == tiff && ["tif", "tiff"].contains(tiffPrepared.urls[0].pathExtension), "TIFF-only screenshot drags preserve the data and correct extension")
+        tiffPrepared.remove()
+        board.clearContents()
+        let fileItem = NSPasteboardItem(); fileItem.setString(finder.absoluteString, forType: .fileURL); fileItem.setData(png, forType: .png)
+        board.writeObjects([fileItem])
+        let fileRequest = try FileDropRequest.read(board)
+        let fromFinder = try fileRequest.prepare(temporaryBase: temporary)
+        try check(fromFinder.urls == [finder] && fromFinder.originalURLs == [finder], "Finder URL wins over its duplicate image representation and keeps original provenance")
+        fromFinder.remove()
+        try check(FileManager.default.fileExists(atPath: finder.path), "cleaning a drop never deletes the Finder original")
+        board.clearContents(); let web = NSPasteboardItem(); web.setString("https://example.invalid/image.png", forType: .URL); board.writeObjects([web])
+        try check(!FileDropRequest.supports(board), "a website URL alone is not treated as a local screenshot")
+        try rejects("unsupported drops produce an explicit error") { _ = try FileDropRequest.read(board) }
+        try rejects("invalid image data is rejected") { _ = try FileDropRequest(sources: [.image(Data("not an image".utf8))]).prepare(temporaryBase: temporary) }
+        try check(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty, "failed image decoding leaves no temporary files")
+        let multi = FixtureDropPromise(names: ["One.png", "Two.png"], data: png)
+        let promised = try FileDropRequest(sources: [.promise(multi)]).prepare(temporaryBase: temporary)
+        try check(promised.urls.count == 2 && promised.originalURLs.isEmpty, "multiple promised screenshots of the same type all arrive")
+        try check(try promised.urls.allSatisfy { try Data(contentsOf: $0) == png }, "promised screenshot copies remain valid after their coordinated callback")
+        promised.remove()
+        let bad = FixtureDropPromise(names: ["Failed.png"], data: png, behavior: .failure)
+        try rejects("a source-app promise failure is surfaced") { _ = try FileDropRequest(sources: [.promise(bad)]).prepare(temporaryBase: temporary) }
+        let missing = FixtureDropPromise(names: ["Missing.png"], data: png, behavior: .never)
+        try rejects("unfinished screenshot promises time out instead of hanging") { _ = try FileDropRequest(sources: [.promise(missing)]).prepare(temporaryBase: temporary, promiseTimeout: 0.06) }
+        let escaped = FixtureDropPromise(names: ["Escape.png"], data: png, behavior: .outside(finder))
+        try rejects("promised files outside the private destination are rejected") { _ = try FileDropRequest(sources: [.promise(escaped)]).prepare(temporaryBase: temporary) }
+        try check(try Data(contentsOf: finder) == png && FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty, "promise failures keep external files intact and clean staging")
+        // Use an isolated pasteboard with a real AppKit promise provider. No
+        // actual drag session, app window, screen capture, or clipboard is used.
+        board.clearContents()
+        let delegate = FixtureNativePromiseDelegate(data: png)
+        let provider = NSFilePromiseProvider(fileType: UTType.png.identifier, delegate: delegate)
+        board.writeObjects([provider])
+        try check(FileDropRequest.supports(board), "native screenshot file-promise types are registered")
+        let native = try FileDropRequest.read(board)
+        try check(native.sources.count == 1, "a native file-promise pasteboard produces one retained promise, not a duplicate thumbnail")
+        if case .promise(let retained) = native.sources[0] {
+            try check(retained is NativeDroppedFilePromise, "native screenshot promises use the AppKit receiver adapter")
+        } else { throw VaultError.message("Expected an AppKit file promise") }
+        // AppKit fulfills this provider only during a real OS drag session.
+        // Delivery semantics above use deterministic providers instead; a real
+        // screen-thumbnail drag is intentionally left to an approved UI check.
+        let late = try FileDropStaging(base: temporary)
+        late.remove()
+        try VaultStorage.directory(late.promises)
+        let lateURL = late.promises.appendingPathComponent("Late.png"); try png.write(to: lateURL)
+        try rejects("late screenshot delivery cannot reopen cancelled staging") { try late.capture(lateURL) }
+        try check(!FileManager.default.fileExists(atPath: late.folder.path), "late deliveries remove any newly arrived temporary image")
+        withExtendedLifetime((provider, delegate)) {}
+        let model = AppModel(root: root.appendingPathComponent("store"))
+        model.create(name: "Drop fixtures", passcode: "fixture screenshot phrase", mac: false); try await wait(model)
+        let storage = model.storage!, header = model.header!
+        let key = try storage.passcodeKey("fixture screenshot phrase", header: header)
+        let region = NativeDropContainer(); region.model = model
+        try check(Set(FileDropRequest.registeredTypes).isSubset(of: Set(region.registeredDraggedTypes)), "the native drop region accepts URLs, raw images, and screenshot promises")
+        model.importDrop(FileDropRequest(sources: [.image(png), .file(finder), .promise(FixtureDropPromise(names: ["Delivered.png"], data: png))]), temporaryBase: temporary)
+        try await wait(model)
+        let result = model.importResult!
+        try check(result.importedFiles == 3 && model.manifest.items.count == 3, "mixed Finder, raw screenshot, and promised-file drops all encrypt and import")
+        try check(result.receipts.count == 1 && result.receipts[0].source == finder, "only genuine Finder files offer the copy-then-Trash action")
+        try check(ImportSheetItem(result: result).id == ImportSheetItem(result: result).id, "import completion sheets have a stable identity even for screenshot-only imports")
+        for stored in model.manifest.items { try check(try storage.preview(stored, vaultID: header.id, key: key) == png, "the encrypted dropped copy matches generated image bytes") }
+        try check(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty, "successful encrypted imports immediately remove plaintext drop staging")
+        try check(!model.canImportDrop, "a pending original-removal confirmation cannot be replaced by another drop")
+        model.importResult = nil
+        model.showRecentlyDeleted(true); try check(!model.canImportDrop, "Recently Deleted rejects incoming drops")
+        model.showRecentlyDeleted(false)
+        model.importDrop(FileDropRequest(sources: [.promise(FixtureDropPromise(names: ["Pending.png"], data: png, behavior: .never))]), temporaryBase: temporary)
+        try await Task.sleep(nanoseconds: 70_000_000)
+        model.lock(); try await wait(model)
+        try check(!model.unlocked && model.manifest.items.isEmpty && model.importResult == nil, "locking cancels an in-flight screenshot delivery without reopening the vault")
+        try check(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty, "cancelled screenshot delivery removes its private staging folder")
+        try check(try storage.loadManifest(vaultID: header.id, key: key).items.count == 3, "cancelled screenshot delivery leaves the prior encrypted catalog intact")
     }
 
     @MainActor static func recoveryChecks(root: URL) async throws {
@@ -509,6 +737,7 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
                 collection.layoutSubtreeIfNeeded()
             }
             try check(exception == nil, "nonempty \(grid ? "grid" : "list") browser creates its registered item without an AppKit exception: \(exception ?? "OK")")
+            try check(collection.registeredDraggedTypes.isEmpty && scroll.registeredDraggedTypes.isEmpty, "the file canvas delegates incoming screenshot drops to its containing drop region")
             try check((rendered as? FileCollectionItem)?.canvas.entry?.name == "existing-file.txt", "\(grid ? "grid" : "list") browser retains the existing file entry")
             let canvas = (rendered as! FileCollectionItem).canvas
             canvas.frame = NSRect(x: 0, y: 0, width: 180, height: 180)
@@ -571,4 +800,41 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         try check(abs(scroll.magnification - 1) < 0.001, "Fit resets native image magnification")
         scroll.onZoom = nil; scroll.imageView.image = nil; scroll.documentView = nil
     }
+}
+
+private final class FixtureDropPromise: DroppedFilePromise {
+    enum Behavior { case success, failure, never, outside(URL) }
+    let fileNames: [String]
+    let data: Data
+    let behavior: Behavior
+    init(names: [String], data: Data, behavior: Behavior = .success) { fileNames = names; self.data = data; self.behavior = behavior }
+    func receive(into folder: URL, queue: OperationQueue, completion: @escaping (URL, Error?) -> Void) {
+        if case .never = behavior { return }
+        for name in fileNames {
+            queue.addOperation {
+                let url = folder.appendingPathComponent(name)
+                do {
+                    if case .failure = self.behavior { throw VaultError.message("Generated promise failure") }
+                    if case let .outside(other) = self.behavior { completion(other, nil); return }
+                    try self.data.write(to: url)
+                    completion(url, nil)
+                } catch { completion(url, error) }
+            }
+        }
+    }
+}
+private final class FixtureNativePromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
+    let data: Data
+    init(data: Data) { self.data = data }
+    func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider, fileNameForType fileType: String) -> String { "Native screenshot.png" }
+    func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider, writePromiseTo url: URL, completionHandler: @escaping (Error?) -> Void) {
+        do { try data.write(to: url); completionHandler(nil) } catch { completionHandler(error) }
+    }
+}
+
+private final class OCRFixtureProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var progress: [String] = []
+    func add(_ page: Int, _ total: Int) { lock.lock(); defer { lock.unlock() }; progress.append("\(page)/\(total)") }
+    var values: [String] { lock.lock(); defer { lock.unlock() }; return progress }
 }
