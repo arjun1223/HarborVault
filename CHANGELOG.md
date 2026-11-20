@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.6
+
+- Unlock vaults with inline Touch ID, including automatic prompting after idle locking and before sharing.
+- Use the vault password as the primary fallback, with Mac authentication also available.
+- Play supported videos in the small preview and full viewer directly from encrypted storage.
+- Enter full screen in the double-click viewer with the green button or Control–Command–F.
+- Drag selected files onto folders or breadcrumb locations, including All files.
+- Drop onto sidebar actions for Trash, Share, Export, or moving to the vault root. Sidebar actions fade in during dragging and use proportionally rendered icons.
+- Sort files by name, date, size, or kind, and Recently Deleted by scheduled deletion date.
+- Enable native Liquid Glass on macOS 26 or later, with system-controlled intensity on macOS 27.
+- Keep renamed image thumbnails working and restore missing image extensions on shared and exported copies.
+- Reveal exported files and folders with Show in Finder.
+
+Requires an Apple silicon Mac running macOS 14 or later. This download is ad hoc signed and has not been notarized by Apple.
+
 ## 1.3.1
 
 - Select and copy recognized text directly on images in either preview.

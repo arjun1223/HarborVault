@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 import CoreText
 import ImageIO
 import PDFKit
+import AVFoundation
 
 private var checks = 0
 private func check(_ condition: @autoclosure () throws -> Bool, _ label: String) throws {
@@ -34,6 +35,21 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         if CommandLine.arguments.contains("--ocr") {
             try await ocrChecks(root: temp.appendingPathComponent("ocr"))
             print("All OCR checks passed: \(checks)"); return
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--video-fixture"), CommandLine.arguments.indices.contains(index + 1) {
+            let fixture = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+            let storage = try VaultStorage(root: temp.appendingPathComponent("video-vault"))
+            let (header, key) = try storage.create(name: "Video test", passcode: "disposable video passcode", mac: false)
+            let result = try storage.importSources([fixture], parent: nil, manifest: VaultManifest(), vaultID: header.id, key: key)
+            guard let item = result.manifest.items.first,
+                  let video = try await storage.loadPreview(item, vaultID: header.id, key: key).video else {
+                throw VaultError.message("Video preview did not open.")
+            }
+            defer { video.close() }
+            let frames = AVAssetImageGenerator(asset: video.asset)
+            let (image, _) = try await frames.image(at: CMTime(seconds: 0.5, preferredTimescale: 600))
+            try check(image.width > 0, "AVFoundation decodes a video frame directly from the encrypted vault")
+            return
         }
         let storage = try VaultStorage(root: temp.appendingPathComponent("vaults"))
         let sources = temp.appendingPathComponent("sources")
@@ -70,6 +86,21 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         try check(try storage.preview(file, vaultID: header.id, key: key) == text, "decrypted preview matches the original")
         try check(try storage.preview(emptyFile, vaultID: header.id, key: key).isEmpty, "empty files authenticate and round-trip")
         try check(try storage.preview(largeFile, vaultID: header.id, key: key) == big, "multi-chunk files round-trip")
+        let largeObject = storage.object(header.id, largeFile.id)
+        let reader = try VaultCrypto.ChunkReader(source: largeObject, key: key, vaultID: header.id,
+                                                 fileID: largeFile.id, expectedSize: largeFile.size)
+        try check(try reader.readBytes(at: Int64(VaultCrypto.chunkSize), upTo: 200) == Data(big.suffix(123)),
+                  "video seeks authenticate and read the final encrypted chunk directly")
+        try check(try reader.readBytes(at: 17, upTo: 42) == big.subdata(in: 17..<59),
+                  "video can seek backwards across encrypted chunks")
+        let damagedVideo = temp.appendingPathComponent("damaged-video")
+        var damagedVideoBytes = try Data(contentsOf: largeObject)
+        damagedVideoBytes[damagedVideoBytes.count - 1] ^= 1
+        try damagedVideoBytes.write(to: damagedVideo)
+        let badReader = try VaultCrypto.ChunkReader(source: damagedVideo, key: key, vaultID: header.id, fileID: largeFile.id, expectedSize: largeFile.size)
+        try rejects("video does not return bytes from a tampered chunk") {
+            _ = try badReader.readBytes(at: Int64(VaultCrypto.chunkSize), upTo: 123)
+        }
         let catalog = try Data(contentsOf: storage.folder(header.id).appendingPathComponent("catalog.sealed"))
         try check(catalog.range(of: Data("sensitive-name".utf8)) == nil, "filenames are absent from the on-disk catalog")
         let objectURL = storage.object(header.id, file.id)
@@ -543,6 +574,30 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         model.idleMinutes = 5
         model.checkIdle(now: Date().addingTimeInterval(301))
         try check(!model.unlocked, "idle deadline locks the vault without a real-time wait")
+        var macHeader = model.vaults[0]
+        // The placeholder envelope exercises the UI gate without prompting for authentication.
+        macHeader.macUnlock = VaultCrypto.MacUnlock(privateKeyBlob: Data(), ephemeralPublicKey: Data(), wrappedKey: Data())
+        model.vaults[0] = macHeader
+        try check(!model.canStartAutomaticMacUnlock, "passcode-only idle lock does not queue Mac authentication")
+        model.unlock(passcode: "model test phrase"); try await wait(model)
+        model.checkIdle(now: Date().addingTimeInterval(301))
+        try check(!model.unlocked && model.canStartAutomaticMacUnlock, "idle lock queues inline Touch ID for a Mac-enabled vault")
+        model.lock()
+        model.choose(macHeader.id)
+        try check(model.canStartAutomaticMacUnlock, "reopening a locked Mac-enabled vault queues one automatic prompt")
+        model.showSettings = true
+        try check(!model.canStartAutomaticMacUnlock, "automatic authentication waits while preferences are open")
+        model.showSettings = false
+        model.beginAutomaticMacUnlock()
+        try check(!model.canStartAutomaticMacUnlock && !model.busy && !model.unlocked,
+                  "automatic Touch ID waits for an embedded view without starting a system prompt")
+        model.lock()
+        try check(model.inlineTouchIDContext == nil && model.inlineTouchIDMessage == nil,
+                  "locking clears pending inline Touch ID")
+        model.choose(macHeader.id)
+        model.lock()
+        try check(!model.canStartAutomaticMacUnlock, "explicit locking clears a queued authentication prompt")
+
     }
     @MainActor static func wait(_ model: AppModel) async throws {
         let deadline = Date().addingTimeInterval(15)
@@ -585,7 +640,14 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         try check(model.folderID == nil, "enclosing-folder navigation returns to the parent")
         model.query = "A"; model.navigate(ids[0]); model.goBack()
         try check(model.query == "A" && model.folderID == nil, "history restores a previous filename search")
-        model.query = ""; model.selectAll()
+        model.query = ""
+        let originalOrder = model.visible.map(\.id)
+        model.fileSort = .largest
+        let visibleFiles = model.visible.filter { !$0.isFolder }
+        try check(visibleFiles.map(\.size) == visibleFiles.map(\.size).sorted(by: >), "size sorting orders files from largest to smallest")
+        model.fileSort = .name
+        try check(model.visible.map(\.id) == originalOrder, "returning to name sort restores the browser order")
+        model.selectAll()
         try check(model.selectionIDs == [ids[0], ids[1]], "Select All is limited to the current visible folder")
         model.select(ids[0]); model.moveSelection(by: 1, extend: true)
         try check(model.selectionIDs == [ids[0], ids[1]], "Shift-arrow extends selection")
@@ -595,9 +657,9 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         model.lock()
         try check(model.selectionIDs.isEmpty && !model.canGoBack && !model.canGoForward && model.quickViewItems.isEmpty, "locking clears multiple selection, history, and grouped previews")
         let text = Data("A thumbnail fixture\nSecond line\n".utf8)
-        let thumbnail = ThumbnailRenderer.render(text, name: "sample.txt")
+        let thumbnail = ThumbnailRenderer.render(text)
         try check(thumbnail != nil && thumbnail!.size.width <= 512, "text files generate bounded in-memory thumbnails")
-        try check(ThumbnailRenderer.render(Data([0, 255, 0]), name: "unknown.bin") == nil, "unsupported binary files fall back to a file icon")
+        try check(ThumbnailRenderer.render(Data([0, 255, 0])) == nil, "unsupported binary files fall back to a file icon")
         let cache = ThumbnailCache()
         let item = VaultItem(id: UUID(), parent: nil, name: "sample.txt", isFolder: false, size: Int64(text.count), created: now, modified: now, digest: Data(repeating: 0, count: 32))
         var delivered = false
@@ -605,6 +667,69 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         cache.clear()
         try await Task.sleep(nanoseconds: 120_000_000)
         try check(!delivered, "locking cancels thumbnail callbacks and discards late decoded images")
+        let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 6, pixelsHigh: 4,
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        memset(image.bitmapData!, 140, image.bytesPerRow * image.pixelsHigh)
+        let png = image.representation(using: .png, properties: [:])!
+        let fixture = root.deletingLastPathComponent().appendingPathComponent("Thumbnail rename fixture.png")
+        try png.write(to: fixture)
+        model.unlock(passcode: "browser test phrase")
+        try await wait(model)
+        model.importFiles([fixture])
+        try await wait(model)
+        guard let original = model.manifest.items.first(where: { $0.name == fixture.lastPathComponent }),
+              let storage = model.storage, let header = model.header else {
+            throw VaultError.message("Missing thumbnail rename fixture.")
+        }
+        var renamed = original
+        renamed.name = "Thumbnail rename fixture"
+        let vaultKey = try storage.passcodeKey("browser test phrase", header: header)
+        var manifest = model.manifest
+        manifest.items[manifest.items.firstIndex(where: { $0.id == renamed.id })!] = renamed
+        try storage.saveManifest(manifest, vaultID: header.id, key: vaultKey)
+        model.lock()
+        model.unlock(passcode: "browser test phrase")
+        try await wait(model)
+        guard let reopened = model.manifest.items.first(where: { $0.id == renamed.id }) else {
+            throw VaultError.message("Missing renamed thumbnail fixture.")
+        }
+        let afterRename: NSImage? = await withCheckedContinuation { continuation in
+            model.requestThumbnail(reopened) { continuation.resume(returning: $0) }
+        }
+        try check(reopened.name == renamed.name && afterRename != nil, "an image renamed without an extension regenerates its thumbnail after relocking")
+        let shareBase = root.deletingLastPathComponent().appendingPathComponent("renamed-image-share")
+        let share = try VaultShareFiles.prepare([reopened], storage: storage, manifest: model.manifest,
+                                               vaultID: header.id, key: vaultKey, temporaryBase: shareBase)
+        let sharedImage = share.urls[0]
+        let sharedBytes = try Data(contentsOf: sharedImage)
+        try check(sharedImage.lastPathComponent == reopened.name + ".png" &&
+                  UTType(filenameExtension: sharedImage.pathExtension) == .png &&
+                  sharedBytes == png,
+                  "sharing an extensionless PNG restores the PNG extension and preserves the image bytes")
+        let suggestedName = try storage.suggestedExportName(reopened, vaultID: header.id, key: vaultKey)
+        try check(suggestedName == reopened.name + ".png", "the Save panel suggests the restored image extension")
+        let exportRoot = root.deletingLastPathComponent().appendingPathComponent("renamed-image-export")
+        try VaultStorage.directory(exportRoot)
+        let preferred = exportRoot.appendingPathComponent(reopened.name)
+        let exported = try storage.export(reopened, to: preferred, manifest: model.manifest, vaultID: header.id, key: vaultKey)
+        let exportedBytes = try Data(contentsOf: exported)
+        try check(exported.lastPathComponent == suggestedName && exportedBytes == png, "export restores the PNG extension and preserves the original bytes")
+        try rejects("a corrected export filename never overwrites an existing PNG") {
+            try storage.export(reopened, to: preferred, manifest: model.manifest, vaultID: header.id, key: vaultKey)
+        }
+        let duplicate = try storage.export(reopened, to: preferred, manifest: model.manifest, vaultID: header.id, key: vaultKey, uniquingName: true)
+        try check(duplicate.lastPathComponent == reopened.name + " (2).png", "batch export puts duplicate numbering before the corrected extension")
+        let folder = VaultItem(id: UUID(), parent: nil, name: "Images", isFolder: true, size: 0, created: Date(), modified: Date(), digest: nil)
+        var child = reopened
+        child.parent = folder.id
+        var folderManifest = VaultManifest()
+        folderManifest.items = [folder, child]
+        let exportedFolder = try storage.export(folder, to: exportRoot.appendingPathComponent(folder.name),
+                                                manifest: folderManifest, vaultID: header.id, key: vaultKey)
+        try check(try Data(contentsOf: exportedFolder.appendingPathComponent(suggestedName)) == png,
+                  "folder export restores image extensions inside the folder")
+
     }
     static func hardware() throws {
         try check(SecureEnclave.isAvailable, "Secure Enclave is available outside the build sandbox")
@@ -676,7 +801,9 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         let shareBase = root.appendingPathComponent("share-temp")
         var files: VaultShareFiles? = try VaultShareFiles.prepare([item], storage: storage, manifest: imported.manifest, vaultID: sibling.id, key: siblingKey, temporaryBase: shareBase)
         let preparedFolder = files!.folder
-        try check(try Data(contentsOf: files!.urls[0]) == bytes, "sharing stages a verified readable copy in an isolated temporary folder")
+        let stagedBytes = try Data(contentsOf: files!.urls[0])
+        try check(files!.urls[0].lastPathComponent == "share.txt" && stagedBytes == bytes,
+                  "sharing stages a verified readable copy with the existing filename in an isolated temporary folder")
         let permissions = try FileManager.default.attributesOfItem(atPath: preparedFolder.path)[.posixPermissions] as? NSNumber
         try check(permissions?.intValue == 0o700, "temporary sharing directory is owner-only")
         files = nil
@@ -737,7 +864,8 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
                 collection.layoutSubtreeIfNeeded()
             }
             try check(exception == nil, "nonempty \(grid ? "grid" : "list") browser creates its registered item without an AppKit exception: \(exception ?? "OK")")
-            try check(collection.registeredDraggedTypes.isEmpty && scroll.registeredDraggedTypes.isEmpty, "the file canvas delegates incoming screenshot drops to its containing drop region")
+            try check(collection.registeredDraggedTypes == [FileCollectionView.vaultDragType] && scroll.registeredDraggedTypes.isEmpty,
+                      "the file canvas accepts internal moves and delegates screenshot imports to its containing drop region")
             try check((rendered as? FileCollectionItem)?.canvas.entry?.name == "existing-file.txt", "\(grid ? "grid" : "list") browser retains the existing file entry")
             let canvas = (rendered as! FileCollectionItem).canvas
             canvas.frame = NSRect(x: 0, y: 0, width: 180, height: 180)
@@ -778,6 +906,29 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         }
         let key = try model.storage!.passcodeKey("existing fixture phrase", header: model.header!)
         try check(try model.storage!.preview(model.visible[0], vaultID: savedID, key: key) == bytes, "existing encrypted file contents still decrypt after native browser setup")
+        let pathFolder = VaultItem(id: UUID(), parent: nil, name: "Path drop fixture", isFolder: true, size: 0, created: Date(), modified: Date(), digest: nil)
+        model.manifest.items.append(pathFolder)
+        try model.storage!.saveManifest(model.manifest, vaultID: savedID, key: key)
+        let pathFiles = Set(model.visible.filter { !$0.isFolder }.map(\.id))
+        model.internalDragIDs = pathFiles
+        try check(model.dropSelection(in: pathFolder.id), "a path folder accepts an internal selection")
+        try await wait(model)
+        model.navigate(pathFolder.id)
+        model.internalDragIDs = pathFiles
+        try check(model.dropSelection(in: nil), "the All files breadcrumb accepts a selection from a nested folder")
+        try await wait(model)
+        try check(model.manifest.items.filter { pathFiles.contains($0.id) }.allSatisfy { $0.parent == nil },
+                  "dropping on All files moves every selected item to the vault root")
+        model.internalDragIDs = [pathFolder.id]
+        try check(!model.canDropSelection(in: pathFolder.id), "path drops reject moving a folder inside itself")
+        model.internalDragIDs = []
+        model.navigate(nil)
+        let droppedIDs = Set(model.visible.map(\.id))
+        model.selectAll()
+        model.deleteSelection(confirm: false)
+        try await wait(model)
+        try check(model.visible.isEmpty && Set(model.manifest.recentlyDeleted.map(\.id)) == droppedIDs,
+                  "dropping a selection in Recently Deleted moves all selected files without a confirmation dialog")
         model.lock()
     }
     @MainActor static func zoomChecks() throws {

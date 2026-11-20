@@ -43,3 +43,36 @@ enum QuickViewKeyAction {
     }
 }
 
+
+
+enum FileSort: String, CaseIterable, Identifiable {
+    case name = "Name"
+    case newest = "Newest first"
+    case largest = "Largest first"
+    case kind = "Kind"
+    case deletion = "Deletion date"
+
+    var id: Self { self }
+
+    func precedes(_ first: VaultItem, _ second: VaultItem) -> Bool {
+        if first.isFolder != second.isFolder { return first.isFolder }
+        switch self {
+        case .name: break
+        case .newest:
+            if first.created != second.created { return first.created > second.created }
+        case .largest:
+            if first.size != second.size { return first.size > second.size }
+        case .kind:
+            let a = (first.name as NSString).pathExtension.lowercased()
+            let b = (second.name as NSString).pathExtension.lowercased()
+            if a != b { return a < b }
+        case .deletion:
+            let a = first.permanentDeletionDate ?? .distantFuture
+            let b = second.permanentDeletionDate ?? .distantFuture
+            if a != b { return a < b }
+        }
+        let order = first.name.localizedStandardCompare(second.name)
+        if order != .orderedSame { return order == .orderedAscending }
+        return first.id.uuidString < second.id.uuidString
+    }
+}

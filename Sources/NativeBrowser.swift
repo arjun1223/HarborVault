@@ -24,13 +24,13 @@ struct NativeFileBrowser: NSViewRepresentable {
         collection.backgroundColors = [.clear]
         collection.dataSource = coordinator; collection.delegate = coordinator
         let layout = NSCollectionViewFlowLayout()
-        layout.minimumInteritemSpacing = 14; layout.minimumLineSpacing = 16
+        layout.minimumInteritemSpacing = 12; layout.minimumLineSpacing = 12
         layout.sectionInset = NSEdgeInsets(top: 10, left: 10, bottom: 18, right: 10)
         collection.collectionViewLayout = layout
         // Installing a modern layout replaces AppKit's legacy collection core.
         // Register cells afterward so the new core owns their registration.
         collection.register(FileCollectionItem.self, forItemWithIdentifier: FileCollectionItem.identifier)
-        collection.unregisterDraggedTypes(); scroll.unregisterDraggedTypes()
+        collection.registerForDraggedTypes([FileCollectionView.vaultDragType]); scroll.unregisterDraggedTypes()
         scroll.documentView = collection
         coordinator.collection = collection
         return scroll
@@ -108,13 +108,63 @@ struct NativeFileBrowser: NSViewRepresentable {
         }
         func collectionView(_ collectionView: NSCollectionView, layout collectionViewLayout: NSCollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> NSSize {
             let width = collectionView.enclosingScrollView?.contentSize.width ?? 600
-            if model.grid { return NSSize(width: model.thumbnailSize + 28, height: model.thumbnailSize + 63 * model.textScale) }
-            return NSSize(width: max(100, width - 20), height: (model.density == "compact" ? 43 : 58) * model.textScale)
+            if model.grid { return NSSize(width: model.thumbnailSize + 28, height: model.thumbnailSize + 72 * model.textScale) }
+            return NSSize(width: max(100, width - 20), height: (model.density == "compact" ? 40 : 50) * model.textScale)
         }
     }
 }
 
 @MainActor final class FileCollectionView: NSCollectionView {
+    static let vaultDragType = NSPasteboard.PasteboardType("com.harborvault.internal-selection")
+    private var dragSelection: Set<UUID> = []
+    func beginInternalDrag(from canvas: FileItemCanvas, event: NSEvent) {
+        guard let model, model.unlocked, !model.busy, !model.viewingRecentlyDeleted else { return }
+        collapse?.cancel()
+        dragSelection = model.selectionIDs
+        model.internalDragIDs = dragSelection
+        let writer = NSPasteboardItem()
+        writer.setString(UUID().uuidString, forType: Self.vaultDragType)
+        let dragged = NSDraggingItem(pasteboardWriter: writer)
+        let image = FileDragPreview.image(name: canvas.entry?.name ?? "", thumbnail: canvas.thumbnail,
+                                          symbol: canvas.entry?.symbol ?? "doc", count: dragSelection.count)
+        let pointer = canvas.convert(event.locationInWindow, from: nil)
+        dragged.setDraggingFrame(NSRect(x: pointer.x - 76, y: pointer.y - 22, width: 160, height: 152), contents: image)
+        canvas.beginDraggingSession(with: [dragged], event: event, source: canvas)
+    }
+    func endInternalDrag() {
+        model?.internalDragIDs = []
+        dragSelection = []
+    }
+    private func dragDestination(_ sender: NSDraggingInfo) -> UUID? {
+        let point = convert(sender.draggingLocation, from: nil)
+        guard let path = indexPathForItem(at: point), items.indices.contains(path.item),
+              items[path.item].isFolder else { return nil }
+        return items[path.item].id
+    }
+    private func acceptsInternalDrag(_ sender: NSDraggingInfo) -> Bool {
+        guard let source = sender.draggingSource as? FileItemCanvas, source.browser === self,
+              let model, model.unlocked, !model.busy, !dragSelection.isEmpty else { return false }
+        guard let folder = dragDestination(sender) else { return false }
+        var parent: UUID? = folder
+        while let id = parent {
+            if dragSelection.contains(id) { return false }
+            parent = model.manifest.items.first(where: { $0.id == id })?.parent
+        }
+        return true
+    }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { acceptsInternalDrag(sender) ? .move : [] }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if let event = NSApp.currentEvent { autoscroll(with: event) }
+        return acceptsInternalDrag(sender) ? .move : []
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard acceptsInternalDrag(sender), let model else { return false }
+        model.setSelection(dragSelection)
+        if let folder = dragDestination(sender) {
+            model.moveSelection(to: folder)
+        }
+        return true
+    }
     weak var model: AppModel?
     var items: [VaultItem] = []
     var onOpenItem: ((VaultItem) -> Void)?
@@ -278,7 +328,7 @@ struct NativeFileBrowser: NSViewRepresentable {
         let moveItem = NSMenuItem(title: "Move to", action: nil, keyEquivalent: "")
         moveItem.submenu = moveMenu; menu.addItem(moveItem)
         menu.addItem(.separator())
-        menu.addItem(FileMenuItem("Move \(multiple ? "selected items" : "item") to Recently Deleted…") { [weak model] in model?.deleteSelection() })
+        menu.addItem(FileMenuItem("Move \(multiple ? "selected items" : "item") to Trash…") { [weak model] in model?.deleteSelection() })
         return menu
     }
 }
@@ -311,7 +361,49 @@ struct NativeFileBrowser: NSViewRepresentable {
     }
 }
 
-@MainActor final class FileItemCanvas: NSView {
+private enum FileDragPreview {
+    static func image(name: String, thumbnail: NSImage?, symbol: String, count: Int) -> NSImage {
+        NSImage(size: NSSize(width: 160, height: 152), flipped: true) { _ in
+            let paper = NSRect(x: 49, y: 12, width: 64, height: 82)
+            for index in stride(from: min(2, count - 1), through: 0, by: -1) {
+                let rect = paper.offsetBy(dx: CGFloat(index) * -3, dy: CGFloat(index) * -4)
+                NSColor(white: 1 - CGFloat(index) * 0.12, alpha: 0.96).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+            }
+            if let thumbnail {
+                let area = paper.insetBy(dx: 8, dy: 9)
+                let ratio = min(area.width / max(1, thumbnail.size.width), area.height / max(1, thumbnail.size.height))
+                let size = NSSize(width: thumbnail.size.width * ratio, height: thumbnail.size.height * ratio)
+                thumbnail.draw(in: NSRect(x: area.midX - size.width / 2, y: area.midY - size.height / 2, width: size.width, height: size.height),
+                               from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            } else {
+                NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                    .draw(in: paper.insetBy(dx: 13, dy: 19))
+            }
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            paragraph.lineBreakMode = .byTruncatingMiddle
+            let label = NSRect(x: 3, y: 103, width: 154, height: 42)
+            NSColor.darkGray.withAlphaComponent(0.86).setFill()
+            NSBezierPath(roundedRect: label, xRadius: 6, yRadius: 6).fill()
+            (name as NSString).draw(in: label.insetBy(dx: 5, dy: 3),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                                 .foregroundColor: NSColor.white, .paragraphStyle: paragraph])
+            if count > 1 {
+                let badge = NSRect(x: 11, y: 0, width: 28, height: 28)
+                NSColor.systemRed.setFill()
+                NSBezierPath(ovalIn: badge).fill()
+                ("\(count)" as NSString).draw(in: badge.offsetBy(dx: 0, dy: 3),
+                    withAttributes: [.font: NSFont.systemFont(ofSize: 17, weight: .bold),
+                                     .foregroundColor: NSColor.white, .paragraphStyle: paragraph])
+            }
+            return true
+        }
+    }
+}
+
+@MainActor final class FileItemCanvas: NSView, NSDraggingSource {
+    private var mouseDownPoint: NSPoint?
     var entry: VaultItem?
     var thumbnail: NSImage?
     var requestedID: UUID?
@@ -326,17 +418,37 @@ struct NativeFileBrowser: NSViewRepresentable {
     required init?(coder: NSCoder) { nil }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) {
+        mouseDownPoint = event.clickCount == 1 ? event.locationInWindow : nil
         guard let entry else { return }
         browser?.handleItemClick(entry.id, clickCount: event.clickCount, modifiers: event.modifierFlags, anchor: self)
     }
-    override func mouseUp(with event: NSEvent) { }
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = mouseDownPoint,
+              hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y) >= 10 else { return }
+        mouseDownPoint = nil
+        browser?.beginInternalDrag(from: self, event: event)
+    }
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? .move : []
+    }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        browser?.endInternalDrag()
+    }
+    override func mouseUp(with event: NSEvent) { mouseDownPoint = nil }
     override func menu(for event: NSEvent) -> NSMenu? { browser?.menu(for: event) }
     override func accessibilityPerformPress() -> Bool { onPress?(); return true }
     override func draw(_ dirtyRect: NSRect) {
         guard let entry else { return }
-        if selected {
-            NSColor(HarborDesign.amber).withAlphaComponent(0.14).setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: grid ? 13 : 9, yRadius: grid ? 13 : 9).fill()
+        if grid || selected {
+            let radius: CGFloat = grid ? 14 : 8
+            let card = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: radius, yRadius: radius)
+            NSColor(selected ? HarborDesign.highlight : HarborDesign.surface).setFill()
+            card.fill()
+            if grid {
+                NSColor(selected ? HarborDesign.amber : HarborDesign.border).setStroke()
+                card.lineWidth = 1
+                card.stroke()
+            }
         }
         if grid { drawGrid(entry) } else { drawRow(entry) }
     }
@@ -353,8 +465,12 @@ struct NativeFileBrowser: NSViewRepresentable {
     }
     private func drawGrid(_ entry: VaultItem) {
         let available = NSRect(x: 12, y: 9, width: bounds.width - 24, height: bounds.width - 28)
+        NSColor(HarborDesign.inset).setFill()
+        NSBezierPath(roundedRect: available, xRadius: 9, yRadius: 9).fill()
         let image = thumbnail ?? icon(entry)
-        let ratio = min(available.width / max(1, image.size.width), available.height / max(1, image.size.height))
+        let inset: CGFloat = thumbnail == nil ? available.width * 0.23 : 8
+        let area = available.insetBy(dx: inset, dy: inset)
+        let ratio = min(area.width / max(1, image.size.width), area.height / max(1, image.size.height))
         let size = NSSize(width: image.size.width * ratio, height: image.size.height * ratio)
         let rect = NSRect(x: available.midX - size.width / 2, y: available.midY - size.height / 2, width: size.width, height: size.height)
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
@@ -372,7 +488,8 @@ struct NativeFileBrowser: NSViewRepresentable {
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
         let y = (bounds.height - 17 * textScale) / 2
         text(entry.name, rect: NSRect(x: 54, y: y, width: max(50, bounds.width - 340), height: 20 * textScale), size: 12)
-        let kind = entry.isFolder ? "Folder" : (entry.name as NSString).pathExtension.uppercased() + " file"
+        let fileExtension = (entry.name as NSString).pathExtension.uppercased()
+        let kind = entry.isFolder ? "Folder" : fileExtension.isEmpty ? "File" : fileExtension + " file"
         text(kind, rect: NSRect(x: bounds.width - 265, y: y, width: 85, height: 20 * textScale), size: 11, color: .secondaryLabelColor)
         text(entry.isFolder ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file), rect: NSRect(x: bounds.width - 174, y: y, width: 74, height: 20 * textScale), size: 11, color: .secondaryLabelColor, alignment: .right)
         let date = inTrash ? entry.permanentDeletionDate.map { $0.formatted(.dateTime.month(.abbreviated).day()) } ?? "Never" : entry.created.formatted(.dateTime.month(.abbreviated).day())

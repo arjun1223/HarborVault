@@ -51,8 +51,9 @@ struct SmallPreviewContent: View {
             HStack(spacing: 9) {
                 Text(model.smallPreviewItem?.name ?? "Preview").font(D.font(12, .medium)).lineLimit(1)
                 Spacer(minLength: 5)
-                RecognizedTextButton(session: model.smallTextRecognition,
-                    enabled: !model.smallPreviewLoading && model.smallPreview.map(TextRecognition.supports) == true) { model.toggleRecognizedText(small: true) }
+                if let content = model.smallPreview, TextRecognition.supports(content) {
+                    RecognizedTextButton(session: model.smallTextRecognition, enabled: true) { model.toggleRecognizedText(small: true) }
+                }
                 Button { model.closeSmallPreview() } label: { Image(systemName: "xmark").font(.system(size: 10)) }.buttonStyle(.plain).help("Dismiss preview")
             }.padding(14)
             Divider()
@@ -72,10 +73,11 @@ struct SmallPreviewContent: View {
                         Text(model.smallPreviewError ?? "Preview unavailable").font(D.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center).lineLimit(3)
                     }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            }.background(D.canvas)
+            }
             Divider()
             Text("Double-click the file for the full viewer").font(D.font(10)).foregroundStyle(.secondary).padding(11)
-        }.frame(width: 340, height: 300).background(D.surface)
+        }.frame(width: 340, height: 300).background { HarborBackdrop() }
+            .environment(\.harborGlass, model.liquidGlass && HarborGlassAvailability.supported)
             .preferredColorScheme(model.appearance == "system" ? nil : model.appearance == "dark" ? .dark : .light)
     }
 }

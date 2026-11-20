@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import CryptoKit
 import LocalAuthentication
+import Security
 import UniformTypeIdentifiers
 
 @MainActor final class AppModel: ObservableObject {
@@ -9,11 +10,20 @@ import UniformTypeIdentifiers
     @Published var selectedVaultID: UUID?
     @Published var manifest = VaultManifest()
     @Published var unlocked = false
+    @Published private(set) var automaticMacUnlockRequested = false
+    @Published private(set) var inlineTouchIDContext: LAContext?
+    @Published private(set) var inlineTouchIDMessage: String?
+    private var touchIDPaused = false
     @Published var busy = false
     @Published var activity = ""
     @Published var error: String?
-    @Published var notice: String?
+    @Published var notice: String? {
+        didSet { noticeExportURL = nil }
+    }
+    @Published private(set) var noticeExportURL: URL?
     @Published var query = ""
+    @Published var fileSort: FileSort = .name
+    @Published var trashSort: FileSort = .deletion
     @Published var folderID: UUID?
     @Published var viewingRecentlyDeleted = false
     @Published var trashDateEdit: TrashDateRequest?
@@ -43,12 +53,15 @@ import UniformTypeIdentifiers
     private var viewerAuthContext: LAContext?
     private var viewerAuthJob: Task<Void, Error>?
     private var viewerAuthToken = UUID()
+    private var viewerAutomaticUnlockArmed = false
     @Published var smallPreviewItem: VaultItem?
-    @Published var smallPreview: PreviewContent?
+    @Published var smallPreview: PreviewContent? {
+        didSet { if oldValue?.video !== smallPreview?.video { oldValue?.video?.close() } }
+    }
     @Published var smallPreviewLoading = false
     @Published var smallPreviewError: String?
     private var smallPreviewController: SmallPreviewController?
-    private var smallPreviewJob: Task<Data, Error>?
+    private var smallPreviewJob: Task<PreviewContent, Error>?
     private var smallPreviewToken = UUID()
     @Published var thumbnailSize = max(80, min(224, UserDefaults.standard.double(forKey: "thumbnailSize") == 0 ? 128 : UserDefaults.standard.double(forKey: "thumbnailSize"))) {
         didSet { UserDefaults.standard.set(thumbnailSize, forKey: "thumbnailSize") }
@@ -56,7 +69,7 @@ import UniformTypeIdentifiers
     let thumbnails = ThumbnailCache()
     private var selectionAnchor: UUID?
     private var quickViewController: QuickViewController?
-    private var previewJob: Task<Data, Error>?
+    private var previewJob: Task<PreviewContent, Error>?
     private var previewToken = UUID()
     @Published var showCreate = false
     @Published var showPasscodeSettings = false
@@ -67,10 +80,15 @@ import UniformTypeIdentifiers
     private var actionKey: SymmetricKey?
     private var shareSession: VaultShareSession?
     @Published var importResult: ImportResult?
-    @Published var preview: PreviewContent?
+    @Published var preview: PreviewContent? {
+        didSet { if oldValue?.video !== preview?.video { oldValue?.video?.close() } }
+    }
     @Published var idleMinutes = UserDefaults.standard.integer(forKey: "idleMinutes") == 0 ? 5 : UserDefaults.standard.integer(forKey: "idleMinutes")
     @Published var grid = UserDefaults.standard.bool(forKey: "gridView") {
         didSet { UserDefaults.standard.set(grid, forKey: "gridView") }
+    }
+    @Published var liquidGlass = UserDefaults.standard.bool(forKey: "liquidGlass") {
+        didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") }
     }
     @Published var appearance = UserDefaults.standard.string(forKey: "appearance") ?? "light" {
         didSet { UserDefaults.standard.set(appearance, forKey: "appearance") }
@@ -99,6 +117,7 @@ import UniformTypeIdentifiers
         }
         catch { storage = nil; self.error = error.localizedDescription }
         reload()
+        automaticMacUnlockRequested = header?.macUnlock != nil
         if storage != nil, vaults.isEmpty { showCreate = true }
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor [weak self] in self?.lock() } })
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor [weak self] in self?.lock() } })
@@ -117,7 +136,7 @@ import UniformTypeIdentifiers
     var visible: [VaultItem] {
         let candidates = viewingRecentlyDeleted ? manifest.recentlyDeleted : manifest.items.filter { !$0.isDeleted }
         return candidates.filter { query.isEmpty ? (viewingRecentlyDeleted || $0.parent == folderID) : $0.name.localizedCaseInsensitiveContains(query) }
-            .sorted { a, b in a.isFolder != b.isFolder ? a.isFolder : a.name.localizedStandardCompare(b.name) == .orderedAscending }
+            .sorted(by: (viewingRecentlyDeleted ? trashSort : fileSort).precedes)
     }
     var fileCount: Int { manifest.items.filter { !$0.isFolder && !$0.isDeleted }.count }
     var totalBytes: Int64 { manifest.items.filter { !$0.isDeleted }.reduce(0) { $0 + $1.size } }
@@ -136,11 +155,86 @@ import UniformTypeIdentifiers
         do { vaults = try storage.headers(); if selectedVaultID == nil { selectedVaultID = vaults.first?.id } }
         catch { self.error = "Couldn’t read vault storage: " + error.localizedDescription }
     }
+    var canStartAutomaticMacUnlock: Bool {
+        automaticMacUnlockRequested && !unlocked && !busy && !showCreate && !showSettings &&
+            protectedAction == nil && inlineTouchIDContext == nil && header?.macUnlock != nil
+    }
+    func beginAutomaticMacUnlock() {
+        guard canStartAutomaticMacUnlock else { return }
+        prepareInlineTouchID()
+    }
+    func prepareInlineTouchID() {
+        guard !busy, !unlocked, header?.macUnlock != nil, inlineTouchIDContext == nil else { return }
+        automaticMacUnlockRequested = false
+        touchIDPaused = false
+        startInlineTouchID()
+    }
+    func prepareShareTouchID(requestID: UUID) {
+        guard !busy, !actionAuthenticated, inlineTouchIDContext == nil,
+              let request = protectedAction, request.id == requestID, request.kind == .share,
+              request.header.macUnlock != nil else { return }
+        startInlineTouchID()
+    }
+    private func startInlineTouchID() {
+        let context = LAContext()
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil),
+              context.biometryType == .touchID else {
+            inlineTouchIDMessage = "Touch ID is unavailable. Use Mac authentication or your vault passcode."
+            touchIDPaused = true
+            return
+        }
+        context.touchIDAuthenticationAllowableReuseDuration = 0
+        context.localizedFallbackTitle = ""
+        inlineTouchIDMessage = nil
+        inlineTouchIDContext = context
+    }
+    func evaluateInlineTouchID(_ context: LAContext) {
+        guard inlineTouchIDContext === context else { return }
+        let sharing = protectedAction?.kind == .share
+        let reason = sharing ? "Verify before sharing files" : "Unlock your vault"
+        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, error in
+            let cancelled = (error as? LAError).map { [.userCancel, .appCancel, .systemCancel].contains($0.code) } ?? false
+            Task { @MainActor [weak self] in
+                guard let self, self.inlineTouchIDContext === context else { return }
+                if success {
+                    self.inlineTouchIDContext = nil
+                    context.interactionNotAllowed = true
+                    if sharing { self.authenticateProtectedAction(useMac: true, verifiedContext: context) }
+                    else { self.unlockMac(using: context) }
+                } else {
+                    self.cancelInlineTouchID()
+                    if !cancelled {
+                        self.touchIDPaused = true
+                        self.inlineTouchIDMessage = "Touch ID couldn’t verify you. Try again or use a password."
+                    }
+                }
+            }
+        }
+    }
+    func cancelInlineTouchID() {
+        inlineTouchIDContext?.invalidate()
+        inlineTouchIDContext = nil
+        inlineTouchIDMessage = nil
+    }
+    func pauseInlineTouchID() {
+        touchIDPaused = true
+        cancelInlineTouchID()
+    }
     func choose(_ id: UUID) {
-        if id == selectedVaultID { if viewingRecentlyDeleted { showRecentlyDeleted(false) }; return }
-        lock(); selectedVaultID = id
+        guard !busy else { return }
+        if id == selectedVaultID {
+            if viewingRecentlyDeleted { showRecentlyDeleted(false) }
+        } else {
+            lock()
+            selectedVaultID = id
+        }
+        if !unlocked, inlineTouchIDContext == nil { automaticMacUnlockRequested = header?.macUnlock != nil }
     }
     func lock() {
+        internalDragIDs = []
+        touchIDPaused = false
+        automaticMacUnlockRequested = false
+        cancelInlineTouchID()
         generation = UUID()
         cancelOperation?()
         authContext?.invalidate(); authContext = nil
@@ -162,6 +256,11 @@ import UniformTypeIdentifiers
         notice = nil; error = nil
     }
     func checkIdle(now: Date = Date()) {
+        if NSApplication.shared.isActive, !touchIDPaused, !unlocked, !busy, inlineTouchIDContext == nil,
+           header?.macUnlock != nil, protectedAction == nil, shareSession == nil,
+           !showCreate, !showSettings, error == nil {
+            prepareInlineTouchID()
+        }
         if let permit = transferPermit, !permit.isFresh(for: permit.vaultID, now: now) {
             transferPermit = nil; transferDestinationKey = nil; transferAuthenticatedAt = nil
         }
@@ -169,7 +268,11 @@ import UniformTypeIdentifiers
             actionPermit = nil; actionKey = nil; actionAuthenticatedAt = nil
         }
         guard unlocked else { return }
-        if now.timeIntervalSince(lastActivity) >= Double(idleMinutes * 60) { lock(); return }
+        if now.timeIntervalSince(lastActivity) >= Double(idleMinutes * 60) {
+            lock()
+            automaticMacUnlockRequested = header?.macUnlock != nil
+            return
+        }
         if now.timeIntervalSince(lastTrashPurge) >= 60 { purgeExpiredTrashIfNeeded(now: now) }
     }
     func setIdle(_ minutes: Int) { idleMinutes = minutes; UserDefaults.standard.set(minutes, forKey: "idleMinutes") }
@@ -202,21 +305,44 @@ import UniformTypeIdentifiers
         }
     }
     func unlock(passcode: String) {
-        guard let storage, let header else { return }
+        guard !busy, !unlocked, let storage, let header else { return }
+        automaticMacUnlockRequested = false
+        cancelInlineTouchID()
         run("Unlocking vault…", operation: {
             let key = try storage.passcodeKey(passcode, header: header)
             return (key, try storage.loadManifest(vaultID: header.id, key: key))
         }) { key, manifest in self.key = key; self.manifest = manifest; self.unlocked = true; self.purgeExpiredTrashIfNeeded() }
     }
     func unlockMac() {
-        guard let storage, let header, let mac = header.macUnlock else { return }
+        touchIDPaused = true
+        cancelInlineTouchID()
         let context = LAContext()
-        context.localizedReason = "Unlock \(header.name) in Harbor Vault"
         context.touchIDAuthenticationAllowableReuseDuration = 0
+        unlockMac(using: context)
+    }
+    private func unlockMac(using context: LAContext) {
+        guard !busy, !unlocked, let storage, let header, let mac = header.macUnlock else { return }
+        automaticMacUnlockRequested = false
+        context.localizedReason = "Unlock your vault"
+        let inline = context.interactionNotAllowed
         authContext = context
-        run("Waiting for Mac authentication…", operation: {
+        run(inline ? "Unlocking vault…" : "Waiting for Mac authentication…", operation: {
             defer { context.invalidate() }
-            let key = try VaultCrypto.macKey(mac, vaultID: header.id, context: context)
+            let key: SymmetricKey
+            do {
+                key = try VaultCrypto.macKey(mac, vaultID: header.id, context: context)
+            } catch {
+                if inline { throw VaultError.message("Use Mac authentication or your vault passcode to unlock this vault.") }
+                let failure = error as NSError
+                if failure.domain == LAError.errorDomain,
+                   [LAError.userCancel, .systemCancel, .appCancel].contains(where: { $0.rawValue == failure.code }) {
+                    throw CancellationError()
+                }
+                if failure.domain == NSOSStatusErrorDomain && failure.code == Int(errSecUserCanceled) {
+                    throw CancellationError()
+                }
+                throw error
+            }
             return (key, try storage.loadManifest(vaultID: header.id, key: key))
         }) { key, manifest in
             context.invalidate(); self.authContext = nil
@@ -289,7 +415,11 @@ import UniformTypeIdentifiers
     }
     func requestThumbnail(_ item: VaultItem, completion: @escaping (NSImage?) -> Void) {
         guard unlocked, !item.isFolder, let storage, let header, let key else { completion(nil); return }
-        thumbnails.request(item) { try storage.preview(item, vaultID: header.id, key: key) } completion: { [weak self] image in
+        thumbnails.request(item) {
+            try storage.preview(item, vaultID: header.id, key: key) { firstChunk in
+                ThumbnailRenderer.hasKnownExtension(item.name) || ThumbnailRenderer.canRenderPrefix(firstChunk, totalSize: item.size)
+            }
+        } completion: { [weak self] image in
             guard self?.unlocked == true else { return }; completion(image)
         }
     }
@@ -319,13 +449,13 @@ import UniformTypeIdentifiers
         guard !item.isFolder, let storage, let header, let key else { quickViewLoading = false; return }
         quickViewLoading = true
         let token = previewToken; let session = generation
-        let job = Task.detached(priority: .userInitiated) { try storage.preview(item, vaultID: header.id, key: key) }
+        let job = Task.detached(priority: .userInitiated) { try await storage.loadPreview(item, vaultID: header.id, key: key) }
         previewJob = job
         Task {
             do {
-                let bytes = try await job.value
+                let result = try await job.value
                 guard self.unlocked, self.generation == session, self.previewToken == token else { return }
-                self.preview = PreviewContent(item: item, data: bytes); self.quickViewLoading = false; self.previewJob = nil
+                self.preview = result; self.quickViewLoading = false; self.previewJob = nil
             } catch {
                 guard self.unlocked, self.generation == session, self.previewToken == token else { return }
                 self.quickViewError = error.localizedDescription; self.quickViewLoading = false; self.previewJob = nil
@@ -347,6 +477,7 @@ import UniformTypeIdentifiers
         showQuickView(item)
     }
     func closeQuickView() {
+        viewerAutomaticUnlockArmed = false
         viewerTextRecognition.clear()
         viewerAuthToken = UUID(); viewerAuthJob?.cancel(); viewerAuthJob = nil
         viewerAuthContext?.invalidate(); viewerAuthContext = nil
@@ -357,13 +488,20 @@ import UniformTypeIdentifiers
     }
     func previewLostFocus() {
         viewerTextRecognition.clear()
-        guard quickViewItem != nil, !viewerAuthenticating else { return }
+        guard quickViewItem != nil, !viewerAuthenticating, !viewerLocked else { return }
+        viewerAutomaticUnlockArmed = header?.macUnlock != nil
         previewToken = UUID(); previewJob?.cancel(); previewJob = nil
         preview = nil; quickViewLoading = false; quickViewError = nil
         viewerLocked = true; viewerAuthError = nil
     }
+    func previewRegainedFocus() {
+        guard viewerAutomaticUnlockArmed, viewerLocked, !viewerAuthenticating else { return }
+        viewerAutomaticUnlockArmed = false
+        authenticateViewer(useMac: true)
+    }
     func authenticateViewer(passcode: String? = nil, useMac: Bool = false) {
         guard unlocked, viewerLocked, !viewerAuthenticating, let storage, let header, let currentKey = key, quickViewItem != nil else { return }
+        viewerAutomaticUnlockArmed = false
         viewerAuthenticating = true; viewerAuthError = nil
         let context = LAContext(); context.localizedReason = "Unlock the private file viewer"
         context.touchIDAuthenticationAllowableReuseDuration = 0
@@ -409,13 +547,13 @@ import UniformTypeIdentifiers
         guard !item.isFolder, let storage, let header, let key else { return }
         smallPreviewLoading = true
         let token = smallPreviewToken; let session = generation
-        let job = Task.detached(priority: .userInitiated) { try storage.preview(item, vaultID: header.id, key: key) }
+        let job = Task.detached(priority: .userInitiated) { try await storage.loadPreview(item, vaultID: header.id, key: key) }
         smallPreviewJob = job
         Task {
             do {
-                let data = try await job.value
+                let result = try await job.value
                 guard self.unlocked, self.generation == session, self.smallPreviewToken == token else { return }
-                self.smallPreview = PreviewContent(item: item, data: data); self.smallPreviewLoading = false; self.smallPreviewJob = nil
+                self.smallPreview = result; self.smallPreviewLoading = false; self.smallPreviewJob = nil
             } catch {
                 guard self.unlocked, self.generation == session, self.smallPreviewToken == token else { return }
                 self.smallPreviewError = error.localizedDescription; self.smallPreviewLoading = false; self.smallPreviewJob = nil
@@ -520,17 +658,26 @@ import UniformTypeIdentifiers
         moveToRecentlyDeleted([item])
     }
     func export(_ item: VaultItem) {
-        guard let storage, let header, unlocked, !busy else { return }
+        guard let storage, let header, let key, unlocked, !busy else { return }
+        run("Preparing export…", operation: { try storage.suggestedExportName(item, vaultID: header.id, key: key) }) { name in
+            self.showExportPanel(for: item, suggestedName: name, storage: storage, vaultID: header.id)
+        }
+    }
+    private func showExportPanel(for item: VaultItem, suggestedName: String, storage: VaultStorage, vaultID: UUID) {
+        let token = generation
         let panel = NSSavePanel()
         panel.title = "Export decrypted copy"; panel.prompt = "Export"
         panel.message = "The exported copy will be readable outside the vault. Choose a new filename."
-        panel.nameFieldStringValue = item.name; panel.canCreateDirectories = true
+        panel.nameFieldStringValue = suggestedName; panel.canCreateDirectories = true
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
-                guard self.unlocked, self.selectedVaultID == header.id, let key = self.key else { return }
+                guard self.unlocked, self.generation == token, self.selectedVaultID == vaultID, let key = self.key else { return }
                 let manifest = self.manifest
-                self.run("Exporting verified copy…", operation: { try storage.export(item, to: url, manifest: manifest, vaultID: header.id, key: key) }) { _ in self.notice = "Exported \(item.name). This copy is outside the vault’s protection." }
+                self.run("Exporting verified copy…", operation: { try storage.export(item, to: url, manifest: manifest, vaultID: vaultID, key: key) }) { exported in
+                    self.notice = "Exported \(exported.lastPathComponent). This copy is outside the vault’s protection."
+                    self.noticeExportURL = exported
+                }
             }
         }
     }
@@ -542,6 +689,25 @@ import UniformTypeIdentifiers
             }
             return true
         }
+    }
+    @Published var internalDragIDs: Set<UUID> = []
+    func canDropSelection(in folder: UUID?) -> Bool {
+        guard unlocked, !busy, !viewingRecentlyDeleted, !internalDragIDs.isEmpty,
+              internalDragIDs.isSubset(of: Set(manifest.items.filter { !$0.isDeleted }.map(\.id))) else { return false }
+        var current = folder
+        var visited: Set<UUID> = []
+        while let id = current {
+            guard visited.insert(id).inserted, !internalDragIDs.contains(id),
+                  let entry = manifest.items.first(where: { $0.id == id && $0.isFolder && !$0.isDeleted }) else { return false }
+            current = entry.parent
+        }
+        return true
+    }
+    func dropSelection(in folder: UUID?) -> Bool {
+        guard canDropSelection(in: folder) else { return false }
+        setSelection(internalDragIDs)
+        moveSelection(to: folder)
+        return true
     }
     func exportSelection() {
         let items = topLevelSelection
@@ -561,24 +727,22 @@ import UniformTypeIdentifiers
                     defer { try? FileManager.default.removeItem(at: stage) }
                     try VaultStorage.directory(stage)
                     for item in items {
-                        var name = item.name; var counter = 2
-                        while FileManager.default.fileExists(atPath: stage.appendingPathComponent(name).path) {
-                            let ext = (item.name as NSString).pathExtension
-                            let base = ext.isEmpty ? item.name : (item.name as NSString).deletingPathExtension
-                            name = "\(base) (\(counter))" + (ext.isEmpty ? "" : "." + ext); counter += 1
-                        }
-                        try storage.export(item, to: stage.appendingPathComponent(name), manifest: snapshot, vaultID: header.id, key: key)
+                        try storage.export(item, to: stage.appendingPathComponent(item.name), manifest: snapshot,
+                                           vaultID: header.id, key: key, uniquingName: true)
                     }
                     try Task.checkCancellation()
                     try FileManager.default.moveItem(at: stage, to: destination)
-                    return destination.lastPathComponent
-                }) { name in self.notice = "Exported \(items.count) items to \(name). These copies are outside the vault’s protection." }
+                    return destination
+                }) { destination in
+                    self.notice = "Exported \(items.count) items to \(destination.lastPathComponent). These copies are outside the vault’s protection."
+                    self.noticeExportURL = destination
+                }
             }
         }
     }
-    func deleteSelection() {
+    func deleteSelection(confirm: Bool = true) {
         if viewingRecentlyDeleted { permanentlyDeleteSelection(); return }
-        moveToRecentlyDeleted(topLevelSelection)
+        moveToRecentlyDeleted(topLevelSelection, confirm: confirm)
     }
     func moveSelection(to parent: UUID?) {
         let items = topLevelSelection
@@ -622,15 +786,17 @@ import UniformTypeIdentifiers
     }
     func cancelProtectedAction() {
         guard !busy else { return }
+        cancelInlineTouchID()
         protectedAction = nil; actionPermit = nil; actionKey = nil; actionAuthenticatedAt = nil; error = nil
     }
     var actionAuthenticated: Bool {
         guard let request = protectedAction else { return false }
         return actionPermit?.isFresh(for: request.header.id) == true
     }
-    func authenticateProtectedAction(passcode: String? = nil, useMac: Bool = false) {
+    func authenticateProtectedAction(passcode: String? = nil, useMac: Bool = false, verifiedContext: LAContext? = nil) {
         guard !busy, let storage, let request = protectedAction else { return }
-        let context = LAContext()
+        cancelInlineTouchID()
+        let context = verifiedContext ?? LAContext()
         context.localizedReason = request.kind == .delete ? "Authorize deleting this Harbor vault" : "Authorize sharing files from this Harbor vault"
         context.touchIDAuthenticationAllowableReuseDuration = 0
         authContext = context
@@ -704,15 +870,17 @@ import UniformTypeIdentifiers
         else { quickViewItems.removeAll { !valid.contains($0.id) } }
         if let item = smallPreviewItem, !valid.contains(item.id) { closeSmallPreview() }
     }
-    private func moveToRecentlyDeleted(_ items: [VaultItem]) {
+    private func moveToRecentlyDeleted(_ items: [VaultItem], confirm: Bool = true) {
         guard unlocked, !busy, !viewingRecentlyDeleted, let storage, let header, let key, !items.isEmpty else { return }
         let snapshot = manifest
         let retention = snapshot.retentionDays == 0 ? "until you delete them permanently" : "for \(snapshot.retentionDays) days"
-        let alert = NSAlert()
-        alert.messageText = items.count == 1 ? "Move “\(items[0].name)” to Recently Deleted?" : "Move \(items.count) items to Recently Deleted?"
-        alert.informativeText = "The encrypted copies remain recoverable \(retention). You can change their deletion dates in Recently Deleted."
-        alert.addButton(withTitle: "Move to Recently Deleted"); alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn, unlocked else { return }
+        if confirm {
+            let alert = NSAlert()
+            alert.messageText = items.count == 1 ? "Move “\(items[0].name)” to Trash?" : "Move \(items.count) items to Trash?"
+            alert.informativeText = "The encrypted copies remain recoverable \(retention). You can change their deletion dates in Recently Deleted."
+            alert.addButton(withTitle: "Move to Trash"); alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn, unlocked else { return }
+        }
         run("Moving to Recently Deleted…", operation: { try storage.trashItems(items, manifest: snapshot, vaultID: header.id, key: key) }) { next in
             self.closeQuickView(); self.closeSmallPreview(); self.acceptTrashManifest(next); self.clearSelection()
             self.notice = "\(items.count) item\(items.count == 1 ? "" : "s") moved to Recently Deleted."
@@ -849,4 +1017,8 @@ struct PreviewContent: Identifiable {
     var id: UUID { item.id }
     let item: VaultItem
     let data: Data
+    let video: VaultVideoPreview?
+    init(item: VaultItem, data: Data, video: VaultVideoPreview? = nil) {
+        self.item = item; self.data = data; self.video = video
+    }
 }

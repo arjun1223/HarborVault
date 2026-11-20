@@ -24,14 +24,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in model.lock() }
         }.defaultSize(width: 1160, height: 760).windowStyle(.hiddenTitleBar)
             .commands {
+                CommandGroup(replacing: .appInfo) {
+                    Button("About Harbor Vault") {
+                        let credits = NSMutableAttributedString(string: HarborCredits.author + "\n")
+                        credits.append(NSAttributedString(string: "github.com/arjun1223",
+                                                          attributes: [.link: HarborCredits.github]))
+                        NSApplication.shared.orderFrontStandardAboutPanel(options: [.credits: credits])
+                    }
+                }
                 CommandGroup(replacing: .newItem) {
                     Button("New vault…") { model.showCreate = true }.keyboardShortcut("n").disabled(model.busy || model.storage == nil)
                     Button("New folder…") { model.newFolder() }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(!model.unlocked || model.busy || model.viewingRecentlyDeleted)
                     Button("Import files…") { model.pickImport() }.keyboardShortcut("i").disabled(!model.unlocked || model.busy || model.viewingRecentlyDeleted)
-                    Button(model.viewingRecentlyDeleted ? "Delete Permanently…" : "Move to Recently Deleted…") { model.deleteSelection() }.keyboardShortcut(.delete, modifiers: [.command]).disabled(!model.unlocked || model.busy || model.selectionIDs.isEmpty)
+                    Button(model.viewingRecentlyDeleted ? "Delete Permanently…" : "Move to Trash…") { model.deleteSelection() }.keyboardShortcut(.delete, modifiers: [.command]).disabled(!model.unlocked || model.busy || model.selectionIDs.isEmpty)
                 }
                 CommandMenu("Vault") {
-                    Button("Lock vault") { model.lock() }.keyboardShortcut("l").disabled(!model.unlocked && !model.busy)
+                    Button("Lock vault") { model.lock() }.keyboardShortcut("l").disabled(!model.unlocked && !model.busy && model.inlineTouchIDContext == nil)
                     Button("Quick View selection") { model.toggleQuickView() }.keyboardShortcut("o").disabled(!model.unlocked || model.selectedItem == nil || model.busy)
                     Button("Export selection…") { model.exportSelection() }.keyboardShortcut("e").disabled(!model.unlocked || model.selectionIDs.isEmpty || model.busy)
                     Button("Share selection… (verify identity)") { model.beginShare() }.disabled(!model.unlocked || model.selectionIDs.isEmpty || model.busy)

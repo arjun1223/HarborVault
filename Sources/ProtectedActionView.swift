@@ -20,10 +20,30 @@ struct ProtectedActionView: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Fresh authentication required").font(D.font(12, .medium))
+                    if !deleting, let context = model.inlineTouchIDContext {
+                        HStack(spacing: 10) {
+                            InlineTouchIDView(context: context, ready: model.evaluateInlineTouchID)
+                                .id(ObjectIdentifier(context))
+                                .frame(width: 44, height: 44)
+                                .accessibilityHidden(true)
+                            Text("Touch the Touch ID sensor").font(D.font(12, .medium))
+                            Spacer()
+                        }
+                    } else if !deleting, request.header.macUnlock != nil {
+                        Button("Use Touch ID") { model.prepareShareTouchID(requestID: request.id) }
+                            .buttonStyle(HarborButtonStyle(primary: true)).disabled(model.busy)
+                    }
                     if request.header.macUnlock != nil {
                         Button { passcode = ""; model.authenticateProtectedAction(useMac: true) } label: {
-                            Label("Verify with Touch ID / Mac password", systemImage: "touchid").frame(maxWidth: .infinity)
-                        }.buttonStyle(HarborButtonStyle(primary: true)).disabled(model.busy)
+                            if deleting {
+                                Label("Verify with Touch ID / Mac password", systemImage: "touchid").frame(maxWidth: .infinity)
+                            } else {
+                                Text("Use Mac Password…")
+                            }
+                        }.buttonStyle(HarborButtonStyle(primary: deleting)).disabled(model.busy)
+                    }
+                    if !deleting, let message = model.inlineTouchIDMessage {
+                        Text(message).font(D.font(11)).foregroundStyle(.secondary)
                     }
                     HStack(spacing: 9) {
                         PasswordEntry("This vault’s passcode", text: $passcode).harborField().onSubmit(verifyPasscode)
@@ -55,6 +75,7 @@ struct ProtectedActionView: View {
                 }
             }
         }.padding(32).frame(width: 520).background(D.surface).interactiveDismissDisabled(true)
+            .task(id: request.id) { model.prepareShareTouchID(requestID: request.id) }
     }
     private func verifyPasscode() {
         guard !passcode.isEmpty, !model.busy else { return }

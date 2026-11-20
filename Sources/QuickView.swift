@@ -9,11 +9,13 @@ import VisionKit
     private var closing = false
     init(model: AppModel) {
         self.model = model
-        panel = QuickViewPanel(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        panel = QuickViewPanel(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init()
         panel.model = model; panel.delegate = self
         panel.title = "Quick View"
         panel.titleVisibility = .hidden; panel.titlebarAppearsTransparent = true
+        panel.collectionBehavior.insert(.fullScreenPrimary)
+        panel.standardWindowButton(.zoomButton)?.isEnabled = true
         panel.minSize = NSSize(width: 700, height: 460)
         panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView: QuickViewContent().environmentObject(model))
@@ -26,6 +28,13 @@ import VisionKit
     }
     func windowWillClose(_ notification: Notification) { if !closing { model?.closeQuickView() } }
     func windowShouldClose(_ sender: NSWindow) -> Bool { model?.closeQuickView(); return false }
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard !closing else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.panel.isKeyWindow, !self.closing else { return }
+            self.model?.previewRegainedFocus()
+        }
+    }
     func windowDidResignKey(_ notification: Notification) {
         // A file window must never keep readable content after the user leaves it.
         guard !closing, panel.isVisible else { return }
@@ -37,6 +46,11 @@ import VisionKit
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 3,
+           event.modifierFlags.intersection([.command, .control, .option, .shift]) == [.command, .control] {
+            toggleFullScreen(nil)
+            return
+        }
         if model?.viewerLocked == true {
             if event.type == .keyDown && event.keyCode == 53 { model?.closeQuickView(); return }
             super.sendEvent(event); return
@@ -62,7 +76,8 @@ struct QuickViewContent: View {
             if model.viewerLocked { ViewerUnlockView() }
             else { documentBody }
         }.frame(minWidth: 700, minHeight: 460)
-            .background(D.canvas)
+            .background { HarborBackdrop() }
+            .environment(\.harborGlass, model.liquidGlass && HarborGlassAvailability.supported)
             .preferredColorScheme(model.appearance == "system" ? nil : model.appearance == "dark" ? .dark : .light)
     }
     private var documentBody: some View {
@@ -71,29 +86,42 @@ struct QuickViewContent: View {
                 Image(systemName: model.quickViewItem?.symbol ?? "doc").foregroundStyle(.secondary)
                 Text(model.quickViewItem?.name ?? "Quick View").font(D.font(13, .medium)).lineLimit(1)
                 Spacer()
-                Text(model.quickViewPosition).font(D.font(11)).foregroundStyle(.secondary)
-                RecognizedTextButton(session: model.viewerTextRecognition,
-                    enabled: !model.quickViewLoading && model.preview.map(TextRecognition.supports) == true) { model.toggleRecognizedText() }
-                HStack(spacing: 12) {
-                    Button { model.previewZoom = max(0.25, model.previewZoom / 1.25) } label: { Image(systemName: "minus.magnifyingglass") }.buttonStyle(.plain).help("Zoom out")
-                    Button { model.previewZoom = 1 } label: { Text("Fit").font(D.font(11)) }.buttonStyle(.plain)
-                    Button { model.previewZoom = min(5, model.previewZoom * 1.25) } label: { Image(systemName: "plus.magnifyingglass") }.buttonStyle(.plain).help("Zoom in")
-                }.padding(.horizontal, 14)
-                Button { model.quickViewStep(-1) } label: { Image(systemName: "chevron.left") }.buttonStyle(.plain).help("Previous file (←)")
-                Button { model.quickViewStep(1) } label: { Image(systemName: "chevron.right") }.buttonStyle(.plain).help("Next file (→)")
+                if model.quickViewItems.count > 1 {
+                    Text(model.quickViewPosition).font(D.font(11)).foregroundStyle(.secondary)
+                }
+                if let content = model.preview, TextRecognition.supports(content) {
+                    RecognizedTextButton(session: model.viewerTextRecognition, enabled: true) { model.toggleRecognizedText() }
+                    HStack(spacing: 12) {
+                        Button { model.previewZoom = max(0.25, model.previewZoom / 1.25) } label: {
+                            Image(systemName: "minus.magnifyingglass")
+                        }.buttonStyle(.plain).help("Zoom out")
+                        Button { model.previewZoom = 1 } label: { Text("Fit").font(D.font(11)) }.buttonStyle(.plain)
+                        Button { model.previewZoom = min(5, model.previewZoom * 1.25) } label: {
+                            Image(systemName: "plus.magnifyingglass")
+                        }.buttonStyle(.plain).help("Zoom in")
+                    }.padding(.horizontal, 8)
+                }
+                if model.quickViewItems.count > 1 {
+                    Button { model.quickViewStep(-1) } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(.plain).help("Previous file (←)")
+                    Button { model.quickViewStep(1) } label: { Image(systemName: "chevron.right") }
+                        .buttonStyle(.plain).help("Next file (→)")
+                }
                 Button("Close") { model.closeQuickView() }.buttonStyle(HarborButtonStyle(compact: true))
                 Button { model.beginSharePreview() } label: { Image(systemName: "square.and.arrow.up") }.buttonStyle(.plain).help(model.quickViewIsGroup ? "Share this selected group · requires verification" : "Share this file · requires verification")
-            }.padding(.horizontal, 22).padding(.top, 34).padding(.bottom, 16).background(D.surface)
+            }.padding(.horizontal, 22).padding(.top, 34).padding(.bottom, 16).harborChrome(radius: 0, standard: D.surface)
             Divider()
             HStack(spacing: 0) {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(model.quickViewItems) { item in
-                            QuickViewSidebarItem(item: item)
-                        }
-                    }.padding(12)
-                }.frame(width: 170).background(D.sidebar)
-                Divider()
+                if model.quickViewItems.count > 1 {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(model.quickViewItems) { item in
+                                QuickViewSidebarItem(item: item)
+                            }
+                        }.padding(12)
+                    }.frame(width: 146).harborChrome(radius: 0, standard: D.sidebar)
+                    Divider()
+                }
             Group {
                 if model.quickViewLoading { ProgressView("Decrypting preview…").font(D.font(12)).frame(maxWidth: .infinity, maxHeight: .infinity) }
                 else if let item = model.quickViewItem, item.isFolder {
@@ -111,16 +139,16 @@ struct QuickViewContent: View {
                         if let item = model.quickViewItem { Button("Export copy…") { model.closeQuickView(); model.export(item) }.buttonStyle(HarborButtonStyle(primary: true)) }
                     }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            }.background(D.canvas)
+            }
             }
             Divider()
             HStack(spacing: 7) {
                 Image(systemName: "lock")
                 Text("Switching away locks this viewer. Your vault stays unlocked.").font(D.font(10))
                 Spacer()
-                Text("Space to close  ·  ← → to browse").font(D.font(10)).foregroundStyle(.tertiary)
-            }.font(D.font(10)).foregroundStyle(.secondary).padding(14).background(D.surface)
-        }.background(D.canvas).tint(D.amber)
+                Text(model.quickViewItems.count > 1 ? "Space to close · ← → to browse" : "Space to close").font(D.font(10)).foregroundStyle(.tertiary)
+            }.font(D.font(10)).foregroundStyle(.secondary).padding(14).harborChrome(radius: 0, standard: D.surface)
+        }.tint(D.amber)
             .preferredColorScheme(model.appearance == "system" ? nil : model.appearance == "dark" ? .dark : .light)
     }
 }
@@ -131,7 +159,8 @@ struct QuickViewDocument: View {
     var imageAnalysis: ImageAnalysis?
     var body: some View {
         Group {
-            if (content.item.name as NSString).pathExtension.lowercased() == "pdf", let document = PDFDocument(data: content.data) { ZoomedPDFView(document: document, id: content.item.id, zoom: $zoom) }
+            if let video = content.video { VideoPreviewView(video: video) }
+            else if (content.item.name as NSString).pathExtension.lowercased() == "pdf", let document = PDFDocument(data: content.data) { ZoomedPDFView(document: document, id: content.item.id, zoom: $zoom) }
             else if let image = NSImage(data: content.data) { ZoomedImageView(image: image, id: content.item.id, zoom: $zoom, imageAnalysis: imageAnalysis) }
             else if content.data.count <= 2 * 1024 * 1024, let text = String(data: content.data, encoding: .utf8), !text.contains("\0") {
                 ScrollView([.vertical, .horizontal]) { Text(text).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .topLeading).padding(26) }
@@ -158,7 +187,7 @@ struct QuickViewSidebarItem: View {
                 Group {
                     if let thumbnail { Image(nsImage: thumbnail).resizable().scaledToFit() }
                     else { Image(systemName: item.symbol).font(.system(size: 32, weight: .light)).foregroundStyle(item.isFolder ? HarborDesign.amber : Color.secondary) }
-                }.frame(width: 120, height: 100).padding(6).background(HarborDesign.surface, in: RoundedRectangle(cornerRadius: 8))
+                }.frame(width: 105, height: 81).padding(6).background(HarborDesign.surface, in: RoundedRectangle(cornerRadius: 8))
                 Text(item.name).font(HarborDesign.font(11)).lineLimit(2).multilineTextAlignment(.center).frame(maxWidth: .infinity)
             }.padding(6).background(model.quickViewItem?.id == item.id ? HarborDesign.amber.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(model.quickViewItem?.id == item.id ? HarborDesign.amber : .clear, lineWidth: 1.5))
@@ -191,7 +220,7 @@ struct ViewerUnlockView: View {
                 Button("Close viewer") { model.closeQuickView() }.buttonStyle(.plain).font(D.font(11)).foregroundStyle(.secondary)
             }.padding(28).frame(width: 440).harborSurface(radius: 18)
             Spacer(minLength: 24)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(D.canvas)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func verify() {
         guard !passcode.isEmpty, !model.viewerAuthenticating else { return }

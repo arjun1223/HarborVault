@@ -1,16 +1,24 @@
 import SwiftUI
 import AppKit
+import LocalAuthentication
+import LocalAuthenticationEmbeddedUI
 import UniformTypeIdentifiers
 
 private typealias D = HarborDesign
 
 struct RootView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var model: AppModel
     private var scheme: ColorScheme? { model.appearance == "system" ? nil : model.appearance == "dark" ? .dark : .light }
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
-                SidebarView().frame(width: geometry.size.width < 1040 ? 212 : 236)
+                ZStack {
+                    if model.internalDragIDs.isEmpty { SidebarView().transition(.opacity) }
+                    else { DragActionsSidebar().transition(.opacity) }
+                }
+                .frame(width: geometry.size.width < 1040 ? 206 : 226)
+                .animation(.easeInOut(duration: 0.18), value: model.internalDragIDs.isEmpty)
                 Rectangle().fill(D.border).frame(width: 1)
                 VStack(spacing: 0) {
                     HeaderView()
@@ -20,8 +28,14 @@ struct RootView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 900, minHeight: 640).background(D.canvas).tint(D.amber)
+        .frame(minWidth: 850, minHeight: 600).background { HarborBackdrop() }.tint(D.amber)
         .font(D.font(13, scale: model.textScale)).preferredColorScheme(scheme)
+        .task(id: scenePhase == .active && model.canStartAutomaticMacUnlock) {
+            if scenePhase == .active && model.canStartAutomaticMacUnlock { model.beginAutomaticMacUnlock() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { model.cancelInlineTouchID() }
+        }
         .sheet(isPresented: $model.showCreate) { CreateVaultView() }
         .sheet(isPresented: $model.showPasscodeSettings) { PasscodeSettingsView() }
         .sheet(isPresented: $model.showSettings) { PreferencesView() }
@@ -37,10 +51,16 @@ struct RootView: View {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(D.green)
                     Text(notice).font(D.font(12)).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
+                    if let exported = model.noticeExportURL {
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([exported]) }
+                            .buttonStyle(HarborButtonStyle(compact: true))
+                            .fixedSize()
+                    }
                     Button { model.notice = nil } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }.buttonStyle(.plain).accessibilityLabel("Dismiss notification")
                 }.padding(16).harborSurface(radius: 14).shadow(color: .black.opacity(0.05), radius: 12, y: 4).frame(maxWidth: 640).padding(.bottom, 50).padding(.horizontal, 28)
             }
         }
+        .environment(\.harborGlass, model.liquidGlass && HarborGlassAvailability.supported)
     }
 }
 
@@ -55,17 +75,17 @@ struct SidebarView: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Harbor").font(D.heading(21, .bold)).tracking(-0.6)
-                    Text("Private file storage").font(D.font(10)).foregroundStyle(.secondary)
+                    Text("Vault").font(D.font(12, .medium)).foregroundStyle(.secondary)
                 }
-            }.padding(.horizontal, 22).padding(.top, 38).padding(.bottom, 32)
-            Button { if model.unlocked { model.showRecentlyDeleted(false) } } label: {
+            }.padding(.horizontal, 22).padding(.top, 40).padding(.bottom, 25)
+            Button { model.showRecentlyDeleted(false) } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "square.grid.2x2").font(.system(size: 14, weight: .medium))
                     Text("Files").font(D.font(13, .semibold, scale: model.textScale))
                     Spacer()
                     if model.unlocked { Text("\(model.fileCount)").font(D.font(11)).foregroundStyle(.secondary) }
                 }.padding(.horizontal, 13).frame(height: 42).contentShape(Rectangle())
-            }.buttonStyle(.plain).background(model.viewingRecentlyDeleted ? .clear : D.selected.opacity(0.7), in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 14)
+            }.buttonStyle(.plain).disabled(!model.unlocked).background(model.unlocked && !model.viewingRecentlyDeleted ? D.highlight : .clear, in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 14)
             Button { model.showRecentlyDeleted(true) } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "trash").font(.system(size: 14))
@@ -74,7 +94,7 @@ struct SidebarView: View {
                     if model.unlocked { Text("\(model.trashCount)").font(D.font(11)).foregroundStyle(.secondary) }
                 }.padding(.horizontal, 13).frame(height: 42).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(!model.unlocked)
-                .background(model.viewingRecentlyDeleted ? D.selected.opacity(0.7) : .clear, in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 14).padding(.top, 4)
+                .background(model.viewingRecentlyDeleted ? D.highlight : .clear, in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 14).padding(.top, 4)
             HStack {
                 Text("VAULTS").font(D.font(10, .semibold)).tracking(1.3).foregroundStyle(.secondary)
                 Spacer()
@@ -94,6 +114,7 @@ struct SidebarView: View {
                             }.padding(.horizontal, 12).frame(height: model.density == "compact" ? 37 : 44).contentShape(Rectangle())
                         }.buttonStyle(.plain).background(model.selectedVaultID == vault.id ? D.surface : .clear, in: RoundedRectangle(cornerRadius: 11))
                             .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(model.selectedVaultID == vault.id ? D.border.opacity(0.65) : .clear, lineWidth: 1))
+                            .disabled(model.busy)
                             .contextMenu {
                                 Button("Rename vault…") { model.renameVault(vault) }.disabled(model.busy || !model.unlocked || model.selectedVaultID != vault.id)
                                 Button("Delete vault…", role: .destructive) { model.beginDeleteVault(vault) }.disabled(model.busy)
@@ -102,13 +123,6 @@ struct SidebarView: View {
                 }.padding(.horizontal, 14)
             }
             Spacer(minLength: 18)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 9) {
-                    Image(systemName: "internaldrive").font(.system(size: 14)).foregroundStyle(.secondary)
-                    Text("Stored on this Mac").font(D.font(11, .medium))
-                }
-                Text("Files stay encrypted while locked.").font(D.font(10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(D.surface.opacity(0.55), in: RoundedRectangle(cornerRadius: 13)).padding(.horizontal, 16).padding(.bottom, 17)
             Rectangle().fill(D.border).frame(height: 1).padding(.horizontal, 21)
             Button { model.showSettings = true } label: {
                 HStack(spacing: 11) {
@@ -118,7 +132,7 @@ struct SidebarView: View {
                     Text("⌘,").font(D.font(11)).foregroundStyle(.tertiary)
                 }.foregroundStyle(.secondary).padding(.horizontal, 24).frame(height: 56).contentShape(Rectangle())
             }.buttonStyle(.plain)
-        }.background(D.sidebar)
+        }.harborChrome(radius: 0, standard: D.sidebar)
     }
 }
 
@@ -138,13 +152,15 @@ struct HeaderView: View {
     @EnvironmentObject var model: AppModel
     var body: some View {
         ViewThatFits(in: .horizontal) { header(compact: false); header(compact: true) }
-            .padding(.horizontal, 30).frame(height: 108).background(D.surface)
+            .padding(.horizontal, 26).padding(.top, 16).frame(height: 91).harborChrome(radius: 0, standard: D.surface)
     }
     private func header(compact: Bool) -> some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
-                Text(model.viewingRecentlyDeleted ? "Recently Deleted" : "Files").font(D.heading(25, .semibold, scale: model.textScale)).tracking(-0.7)
-                Text(model.header?.name ?? "Create a vault to get started").font(D.font(12, scale: model.textScale)).foregroundStyle(.secondary).lineLimit(1)
+                Text(model.header?.name ?? "Harbor Vault").font(D.heading(25, .bold, scale: model.textScale)).tracking(-0.8).lineLimit(1)
+                if model.unlocked {
+                    Text(model.viewingRecentlyDeleted ? "Recently Deleted" : "Files").font(D.font(12, scale: model.textScale)).foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 18)
             if model.header != nil { VaultStatus(unlocked: model.unlocked) }
@@ -173,8 +189,8 @@ struct StatusBar: View {
                 else { Image(systemName: model.unlocked ? "checkmark.shield" : "lock").font(.system(size: 10)) }
                 Text(model.busy ? model.activity : model.unlocked ? model.viewingRecentlyDeleted ? "\(model.trashCount) deleted items · \(ByteCountFormatter.string(fromByteCount: model.trashBytes, countStyle: .file))" : "\(model.fileCount) file\(model.fileCount == 1 ? "" : "s")  ·  \(ByteCountFormatter.string(fromByteCount: model.totalBytes, countStyle: .file))" : "Vault contents are encrypted")
                 Spacer()
-                Text("Auto-lock after \(model.idleMinutes) min").foregroundStyle(.tertiary)
-            }.font(D.font(10)).foregroundStyle(.secondary).padding(.horizontal, 28).frame(height: 36).background(D.surface)
+                Label("Auto-lock · \(model.idleMinutes) min", systemImage: "timer").foregroundStyle(.secondary)
+            }.font(D.font(10)).foregroundStyle(.secondary).padding(.horizontal, 28).frame(height: 31).harborChrome(radius: 0, standard: D.surface)
         }
     }
 }
@@ -183,54 +199,348 @@ struct LockedView: View {
     @EnvironmentObject var model: AppModel
     @State private var passcode = ""
     @State private var usePasscode = false
+
+    private var macEnabled: Bool { model.header?.macUnlock != nil }
+
+    private var instruction: String {
+        if model.busy { return model.activity }
+        if let message = model.inlineTouchIDMessage { return message }
+        if model.inlineTouchIDContext != nil { return "Touch ID or enter a password to continue." }
+        if !macEnabled || usePasscode { return "Enter your vault passcode to continue." }
+        return "Use Touch ID or enter a password to continue."
+    }
+
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer(minLength: 24)
-            VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .bottomTrailing) {
-                    RoundedRectangle(cornerRadius: 19).fill(D.inset).frame(width: 66, height: 66)
-                    Image(systemName: "folder.fill").font(.system(size: 28)).foregroundStyle(D.amber).frame(width: 66, height: 66)
-                    Image(systemName: "lock.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary).padding(6).background(D.surface, in: Circle()).overlay(Circle().strokeBorder(D.border, lineWidth: 1)).offset(x: 5, y: 4)
-                }.padding(.bottom, 28)
-                Text(model.header == nil ? "Your private workspace" : "Unlock your vault").font(D.heading(25, .semibold, scale: model.textScale)).tracking(-0.7).padding(.bottom, 10)
-                Text(model.header == nil ? "Keep private files organized in separate encrypted vaults." : "Authenticate to browse and manage the files in this vault.")
-                    .font(D.font(13, scale: model.textScale)).foregroundStyle(.secondary).lineSpacing(4).fixedSize(horizontal: false, vertical: true).padding(.bottom, 27)
-                if model.header == nil {
-                    Button { model.showCreate = true } label: { HStack { Image(systemName: "plus"); Text("Create a vault"); Spacer(); Image(systemName: "arrow.right") }.frame(maxWidth: .infinity) }.buttonStyle(HarborButtonStyle(primary: true)).disabled(model.busy || model.storage == nil)
-                } else {
-                    if model.header?.macUnlock != nil {
-                        Button { passcode = ""; model.unlockMac() } label: {
-                            HStack(spacing: 9) { Image(systemName: "touchid").font(.system(size: 18)); Text("Unlock with your Mac"); Spacer(); Image(systemName: "arrow.right").font(.system(size: 12)) }.frame(maxWidth: .infinity)
-                        }.buttonStyle(HarborButtonStyle(primary: true)).disabled(model.busy)
-                        Text("Touch ID or Mac login password").font(D.font(10)).foregroundStyle(.secondary).padding(.top, 9)
-                        Button { usePasscode.toggle() } label: {
-                            HStack { Text("Use vault passcode"); Spacer(); Image(systemName: usePasscode ? "chevron.up" : "chevron.down").font(.system(size: 10)) }.font(D.font(12)).contentShape(Rectangle()).padding(.vertical, 15)
-                        }.buttonStyle(.plain).foregroundStyle(.secondary).padding(.top, 8)
+        VStack(spacing: 0) {
+            lockIcon.padding(.bottom, 16)
+            if let header = model.header {
+                Text("\(header.name) is locked")
+                    .font(D.heading(23, .semibold, scale: model.textScale))
+                    .lineLimit(2)
+                    .help(header.name)
+                Text(instruction)
+                    .font(D.font(14, scale: model.textScale))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 5)
+                unlockControls.padding(.top, 18)
+            } else {
+                Text("Your private workspace").font(D.heading(23, .semibold, scale: model.textScale))
+                Text("Keep private files in separate encrypted vaults.")
+                    .foregroundStyle(.secondary).padding(.top, 5)
+                Button("Create a vault") { model.showCreate = true }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.busy || model.storage == nil)
+                    .padding(.top, 18)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: 380)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
+    }
+
+    private var lockIcon: some View {
+        let badgeSize: CGFloat = 44
+        return ZStack(alignment: .bottomTrailing) {
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable().scaledToFit().frame(width: 72, height: 72)
+            if model.protectedAction == nil, let context = model.inlineTouchIDContext {
+                InlineTouchIDView(context: context, ready: model.evaluateInlineTouchID)
+                    .id(ObjectIdentifier(context))
+                    .frame(width: badgeSize, height: badgeSize)
+                    .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+                    .clipShape(Circle())
+                    .offset(x: 4, y: 3)
+            } else {
+                Image(systemName: macEnabled ? "touchid" : "lock.fill")
+                    .font(.system(size: macEnabled ? 24 : 16, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: badgeSize, height: badgeSize)
+                    .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+                    .offset(x: 4, y: 3)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var unlockControls: some View {
+        if macEnabled {
+            VStack(spacing: 10) {
+                if model.busy {
+                    if model.activity == "Waiting for Mac authentication…" {
+                        Button("Cancel") { model.lock() }.keyboardShortcut(.cancelAction)
+                    } else {
+                        ProgressView().controlSize(.small)
                     }
-                    if usePasscode || model.header?.macUnlock == nil {
-                        VStack(alignment: .leading, spacing: 10) {
-                            PasswordEntry("Vault passcode", text: $passcode).harborField().onSubmit(submit)
-                            Button(action: submit) { HStack { Text("Unlock vault"); Spacer(); Image(systemName: "arrow.right") }.frame(maxWidth: .infinity) }.buttonStyle(HarborButtonStyle(primary: model.header?.macUnlock == nil)).disabled(passcode.isEmpty || model.busy)
+                } else {
+                    Button {
+                        usePasscode.toggle()
+                        if usePasscode { model.pauseInlineTouchID() }
+                        else { passcode = ""; model.prepareInlineTouchID() }
+                    } label: {
+                        Text(usePasscode ? "Hide Vault Password" : "Use Vault Password…").frame(width: 190)
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+                    .tint(.primary)
+
+                    HStack(spacing: 14) {
+                        if model.inlineTouchIDContext != nil {
+                            Button("Cancel Touch ID") { model.pauseInlineTouchID() }
+                                .keyboardShortcut(.cancelAction)
+                        } else {
+                            Button("Use Touch ID") {
+                                passcode = ""; usePasscode = false; model.prepareInlineTouchID()
+                            }
+                        }
+                        Button("Use Mac Password…") {
+                            passcode = ""; usePasscode = false; model.unlockMac()
                         }
                     }
+                    .buttonStyle(.borderless)
+                    .font(D.font(11, scale: model.textScale))
                 }
-                Rectangle().fill(D.border).frame(height: 1).padding(.top, 24).padding(.bottom, 17)
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "lock.shield").font(.system(size: 12)).padding(.top, 1)
-                    Text("File contents and filenames stay encrypted while locked.").font(D.font(11)).lineSpacing(3)
-                }.foregroundStyle(.secondary)
-            }.padding(32).frame(width: 416).harborSurface(radius: 22)
-            HStack(spacing: 6) { Image(systemName: "internaldrive"); Text("Stored locally. No cloud account required.") }.font(D.font(10)).foregroundStyle(.tertiary)
-            Spacer(minLength: 24)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        if usePasscode || !macEnabled {
+            VStack(spacing: 10) {
+                PasswordEntry("Vault passcode", text: $passcode).harborField().onSubmit(submit)
+                Button("Unlock vault", action: submit)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(passcode.isEmpty || model.busy)
+            }
+            .frame(maxWidth: 250)
+            .padding(.top, macEnabled ? 12 : 0)
+        }
     }
-    private func submit() { guard !passcode.isEmpty, !model.busy else { return }; let input = passcode; passcode = ""; model.unlock(passcode: input) }
+
+    private func submit() {
+        guard !passcode.isEmpty, !model.busy else { return }
+        let input = passcode
+        passcode = ""
+        model.unlock(passcode: input)
+    }
+}
+
+struct InlineTouchIDView: NSViewRepresentable {
+    let context: LAContext
+    let ready: (LAContext) -> Void
+
+    func makeNSView(context representableContext: Context) -> TouchIDHost {
+        TouchIDHost(authenticationContext: context, ready: ready)
+    }
+
+    func updateNSView(_ view: TouchIDHost, context: Context) {}
+
+    final class TouchIDHost: NSView {
+        private let authenticationView: LAAuthenticationView
+        private var ready: ((LAContext) -> Void)?
+        private var keyObserver: NSObjectProtocol?
+
+        init(authenticationContext: LAContext, ready: @escaping (LAContext) -> Void) {
+            authenticationView = LAAuthenticationView(context: authenticationContext, controlSize: .small)
+            self.ready = ready
+            super.init(frame: .zero)
+            authenticationView.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(authenticationView)
+            NSLayoutConstraint.activate([
+                authenticationView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                authenticationView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                authenticationView.topAnchor.constraint(equalTo: topAnchor),
+                authenticationView.bottomAnchor.constraint(equalTo: bottomAnchor)
+            ])
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("Use init(authenticationContext:ready:)") }
+
+        deinit {
+            if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
+            keyObserver = nil
+            guard let window else { return }
+            keyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.startWhenReady() }
+            }
+            DispatchQueue.main.async { [weak self] in self?.startWhenReady() }
+        }
+
+        private func startWhenReady() {
+            guard let window, window.isKeyWindow, window.isVisible, let ready else { return }
+            self.ready = nil
+            ready(authenticationView.context)
+        }
+    }
+}
+
+struct BreadcrumbButton: NSViewRepresentable {
+    let model: AppModel
+    let folder: UUID?
+    let title: String
+    var symbol: String? = nil
+
+    func makeNSView(context: Context) -> BreadcrumbNativeButton {
+        let button = BreadcrumbNativeButton()
+        button.isBordered = false
+        button.imagePosition = .imageLeading
+        button.imageScaling = .scaleProportionallyDown
+        button.target = button
+        button.action = #selector(BreadcrumbNativeButton.openFolder)
+        button.registerForDraggedTypes([FileCollectionView.vaultDragType])
+        return button
+    }
+
+    func updateNSView(_ button: BreadcrumbNativeButton, context: Context) {
+        button.model = model
+        button.folder = folder
+        button.title = title
+        button.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+        button.font = NSFont.systemFont(ofSize: 12 * model.textScale, weight: .medium)
+        button.contentTintColor = .labelColor
+        button.toolTip = "Drop here to move to " + title
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: BreadcrumbNativeButton, context: Context) -> CGSize? {
+        let size = nsView.intrinsicContentSize
+        return CGSize(width: min(size.width + 12, proposal.width ?? size.width + 12), height: max(28, size.height))
+    }
+}
+
+enum DragQuickAction: String, CaseIterable {
+    case trash = "Move to Trash"
+    case share = "Share…"
+    case export = "Export…"
+    case root = "Move to All Files"
+    var symbol: String {
+        switch self {
+        case .trash: return "trash"
+        case .share: return "square.and.arrow.up"
+        case .export: return "square.and.arrow.down"
+        case .root: return "folder"
+        }
+    }
+}
+
+private struct DragActionsSidebar: View {
+    @EnvironmentObject var model: AppModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Quick actions").font(D.heading(17, .semibold)).padding(.top, 22)
+            Text("\(model.internalDragIDs.count) selected").font(D.font(12)).foregroundStyle(.secondary)
+                .padding(.bottom, 12)
+            ForEach(DragQuickAction.allCases, id: \.self) { action in
+                DragActionButton(model: model, action: action)
+                    .frame(height: 86)
+                    .harborChrome(radius: 26, standard: D.surface)
+            }
+            Spacer()
+        }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .harborChrome(radius: 0, standard: D.sidebar)
+    }
+}
+
+private struct DragActionButton: NSViewRepresentable {
+    let model: AppModel
+    let action: DragQuickAction
+    func makeNSView(context: Context) -> BreadcrumbNativeButton {
+        let button = BreadcrumbNativeButton()
+        button.quickAction = action
+        button.title = action == .trash ? "" : action.rawValue
+        button.image = NSImage(systemSymbolName: action.symbol, accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.bezelStyle = .rounded
+        button.registerForDraggedTypes([FileCollectionView.vaultDragType])
+        button.setAccessibilityLabel(action.rawValue)
+        return button
+    }
+    func updateNSView(_ button: BreadcrumbNativeButton, context: Context) { button.model = model }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: BreadcrumbNativeButton, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 186, height: proposal.height ?? 86)
+    }
+}
+
+@MainActor final class BreadcrumbNativeButton: NSButton {
+    weak var model: AppModel?
+    var folder: UUID?
+    var quickAction: DragQuickAction?
+    private var dropHighlighted = false { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { quickAction != nil ? true : super.isFlipped }
+    override func draw(_ dirtyRect: NSRect) {
+        if let quickAction {
+            DragActionAppearance.draw(quickAction, in: bounds, highlighted: dropHighlighted)
+        } else {
+            super.draw(dirtyRect)
+        }
+    }
+
+    @objc func openFolder() {
+        guard let model, !model.viewingRecentlyDeleted else { return }
+        model.navigate(folder)
+    }
+
+    private func accepts(_ sender: NSDraggingInfo) -> Bool {
+        guard let source = sender.draggingSource as? FileItemCanvas,
+              let sourceModel = source.browser?.model, let model, sourceModel === model else { return false }
+        return model.canDropSelection(in: folder)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggingUpdated(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let allowed = accepts(sender)
+        highlight(allowed)
+        dropHighlighted = allowed
+        return allowed ? .move : []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        highlight(false)
+        dropHighlighted = false
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { accepts(sender) }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        highlight(false)
+        dropHighlighted = false
+        guard accepts(sender) else { return false }
+        if let quickAction, let model {
+            let ids = model.internalDragIDs
+            let vaultID = model.selectedVaultID
+            // Run after AppKit finishes the drag so dialogs can receive focus.
+            DispatchQueue.main.async { [weak model] in
+                guard let model, model.unlocked, !model.busy, model.selectedVaultID == vaultID,
+                      ids.isSubset(of: Set(model.visible.map(\.id))) else { return }
+                model.setSelection(ids)
+                switch quickAction {
+                case .trash: model.deleteSelection(confirm: false)
+                case .share: model.beginShare()
+                case .export: model.exportSelection()
+                case .root: model.moveSelection(to: nil)
+                }
+            }
+            return true
+        }
+        return model?.dropSelection(in: folder) == true
+    }
 }
 
 struct BrowserView: View {
     @EnvironmentObject var model: AppModel
     @State private var dropTarget = false
-    private var rowHeight: CGFloat { (model.density == "compact" ? 43 : 58) * model.textScale }
+    @FocusState private var searchFocused: Bool
+    private var sort: Binding<FileSort> { model.viewingRecentlyDeleted ? $model.trashSort : $model.fileSort }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -238,15 +548,18 @@ struct BrowserView: View {
                     Button { model.goBack() } label: { Image(systemName: "chevron.left").frame(width: 25, height: 26) }.buttonStyle(.plain).disabled(!model.canGoBack).help("Back (⌘[)")
                     Button { model.goForward() } label: { Image(systemName: "chevron.right").frame(width: 25, height: 26) }.buttonStyle(.plain).disabled(!model.canGoForward).help("Forward (⌘])")
                 }.padding(.trailing, 10)
-                Button { if !model.viewingRecentlyDeleted { model.navigate(nil) } } label: { Image(systemName: model.viewingRecentlyDeleted ? "trash" : "folder"); Text(model.viewingRecentlyDeleted ? "Recently Deleted" : "All files") }.buttonStyle(.plain)
+                BreadcrumbButton(model: model, folder: nil,
+                                 title: model.viewingRecentlyDeleted ? "Recently Deleted" : "All files",
+                                 symbol: model.viewingRecentlyDeleted ? "trash" : "folder")
+                    .fixedSize()
                 ForEach(model.crumbs) { item in
                     Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.tertiary)
-                    Button(item.name) { model.navigate(item.id) }.buttonStyle(.plain).lineLimit(1)
+                    BreadcrumbButton(model: model, folder: item.id, title: item.name)
                 }
                 Spacer()
                 if !model.query.isEmpty { Text("\(model.visible.count) result\(model.visible.count == 1 ? "" : "s")").foregroundStyle(.secondary) }
-            }.font(D.font(12, .medium, scale: model.textScale)).padding(.bottom, 21)
-            ViewThatFits(in: .horizontal) { toolbar(compact: false); toolbar(compact: true) }.padding(.bottom, 22)
+            }.font(D.font(12, .medium, scale: model.textScale)).padding(.bottom, 12)
+            ViewThatFits(in: .horizontal) { toolbar(compact: false); toolbar(compact: true) }.padding(.bottom, 14)
             if model.viewingRecentlyDeleted { TrashRetentionBar().padding(.bottom, 16) }
             NativeDropRegion(model: model, targeted: $dropTarget) {
                 if model.visible.isEmpty { emptyState }
@@ -254,7 +567,7 @@ struct BrowserView: View {
                 else { tableView }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             HStack(spacing: 9) {
-                if model.selectionIDs.isEmpty { Text("Shift/⌘-click to select · Space for Quick View") }
+                if model.selectionIDs.isEmpty { Text("\(model.visible.count) item\(model.visible.count == 1 ? "" : "s")") }
                 else { Text("\(model.selectionIDs.count) selected · Space for Quick View") }
                 Spacer(minLength: 8)
                 if model.grid {
@@ -263,26 +576,53 @@ struct BrowserView: View {
                     Image(systemName: "photo").font(.system(size: 15))
                 }
             }.font(D.font(10)).foregroundStyle(.secondary).padding(.top, 16)
-        }.padding(.horizontal, 28).padding(.top, 25).padding(.bottom, 20).frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay { if dropTarget { RoundedRectangle(cornerRadius: 18).strokeBorder(D.amber, style: StrokeStyle(lineWidth: 2, dash: [7])).background(D.amber.opacity(0.04), in: RoundedRectangle(cornerRadius: 18)).padding(12).allowsHitTesting(false) } }
+        }.padding(.horizontal, 24).padding(.top, 15).padding(.bottom, 12).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay {
+                if dropTarget {
+                    RoundedRectangle(cornerRadius: 18).strokeBorder(D.amber, style: StrokeStyle(lineWidth: 2, dash: [7]))
+                        .background(D.amber.opacity(0.06), in: RoundedRectangle(cornerRadius: 18)).padding(12)
+                        .overlay(alignment: .bottom) {
+                            Label("Drop to import", systemImage: "arrow.down.to.line")
+                                .font(D.font(12, .semibold)).padding(.horizontal, 16).padding(.vertical, 9)
+                                .background(D.amber, in: Capsule()).foregroundStyle(D.charcoal).padding(25)
+                        }.allowsHitTesting(false)
+                }
+            }
     }
     private func toolbar(compact: Bool) -> some View {
         HStack(spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.secondary)
-                TextField("Search filenames", text: Binding(get: { model.query }, set: { model.query = $0; model.searchChanged() })).textFieldStyle(.plain).font(D.font(12, scale: model.textScale))
+                Button { searchFocused = true } label: { Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.secondary) }
+                    .buttonStyle(.plain).keyboardShortcut("f").help("Search filenames (⌘F)").accessibilityLabel("Focus search")
+                TextField("Search filenames", text: Binding(get: { model.query }, set: { model.query = $0; model.searchChanged() }))
+                    .textFieldStyle(.plain).font(D.font(12, scale: model.textScale)).focused($searchFocused)
                 if !model.query.isEmpty { Button { model.query = ""; model.searchChanged() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain) }
-            }.padding(.horizontal, 13).frame(width: compact ? 180 : 238, height: 36).background(D.surface, in: RoundedRectangle(cornerRadius: 11)).overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(D.border, lineWidth: 1))
+            }.padding(.horizontal, 13).frame(width: compact ? 146 : 217, height: 36).harborChrome(radius: 11, standard: D.surface).overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(D.border, lineWidth: 1))
             Spacer(minLength: 8)
             HStack(spacing: 2) { viewButton(grid: false, symbol: "list.bullet", label: "List view"); viewButton(grid: true, symbol: "square.grid.2x2", label: "Grid view") }.padding(3).background(D.inset, in: RoundedRectangle(cornerRadius: 11))
+            Menu {
+                Picker("Sort by", selection: sort) {
+                    ForEach(FileSort.allCases.filter { model.viewingRecentlyDeleted || $0 != .deletion }) { order in
+                        Text(order.rawValue).tag(order)
+                    }
+                }
+            } label: { Image(systemName: "arrow.up.arrow.down").frame(width: 19, height: 27) }
+                .menuStyle(.borderlessButton).fixedSize().help("Sort files").accessibilityLabel("Sort files")
             if model.viewingRecentlyDeleted {
                 Button { model.restoreSelection() } label: { Label("Restore", systemImage: "arrow.uturn.backward") }.buttonStyle(HarborButtonStyle(primary: true, compact: true)).disabled(model.busy || model.selectionIDs.isEmpty)
                 Button { model.editDeletionDate() } label: { HStack(spacing: 6) { Image(systemName: "calendar"); if !compact { Text("Change date") } } }.buttonStyle(HarborButtonStyle(compact: true)).disabled(model.busy || model.selectionIDs.isEmpty)
                 Button { model.permanentlyDeleteSelection(all: true) } label: { Text("Empty…").foregroundStyle(.red) }.buttonStyle(HarborButtonStyle(compact: true)).disabled(model.busy || model.trashCount == 0)
             } else {
-                Button { model.beginTransfer() } label: { Image(systemName: "arrow.right.square") }.buttonStyle(HarborButtonStyle(compact: true)).help("Send to another vault · move or duplicate").disabled(model.busy || model.selectionIDs.isEmpty)
-                Button { model.beginShare() } label: { Image(systemName: "square.and.arrow.up") }.buttonStyle(HarborButtonStyle(compact: true)).help("Share selected files · requires verification").disabled(model.busy || model.selectionIDs.isEmpty)
-                Button { model.newFolder() } label: { HStack(spacing: 6) { Image(systemName: "folder.badge.plus"); if !compact { Text("New folder") } } }.buttonStyle(HarborButtonStyle(compact: true)).help("New folder (⇧⌘N)").disabled(model.busy)
+                Menu {
+                    Button { model.newFolder() } label: { Label("New folder", systemImage: "folder.badge.plus") }
+                        .disabled(model.busy)
+                    Divider()
+                    Button { model.beginShare() } label: { Label("Share…", systemImage: "square.and.arrow.up") }
+                        .disabled(model.busy || model.selectionIDs.isEmpty)
+                    Button { model.beginTransfer() } label: { Label("Send to another vault…", systemImage: "arrow.right.square") }
+                        .disabled(model.busy || model.selectionIDs.isEmpty)
+                } label: { Image(systemName: "ellipsis.circle").font(.system(size: 15)).frame(height: 27) }
+                    .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("File actions")
                 Button { model.pickImport() } label: { Label("Import", systemImage: "plus") }.buttonStyle(HarborButtonStyle(primary: true, compact: true)).disabled(model.busy)
             }
         }
@@ -295,10 +635,11 @@ struct BrowserView: View {
     private var tableView: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text("Name").frame(maxWidth: .infinity, alignment: .leading)
-                Text("Kind").frame(width: 85, alignment: .leading)
-                Text("Size").frame(width: 74, alignment: .trailing)
-                Text(model.viewingRecentlyDeleted ? "Deletes on" : "Date added").frame(width: 74, alignment: .trailing)
+                sortColumn("Name", order: .name).frame(maxWidth: .infinity, alignment: .leading)
+                sortColumn("Kind", order: .kind).frame(width: 85, alignment: .leading)
+                sortColumn("Size", order: .largest).frame(width: 74, alignment: .trailing)
+                sortColumn(model.viewingRecentlyDeleted ? "Deletes on" : "Date added", order: model.viewingRecentlyDeleted ? .deletion : .newest)
+                    .frame(width: 82, alignment: .trailing)
             }.font(D.font(11, .medium, scale: model.textScale)).foregroundStyle(.secondary).padding(.horizontal, 24).frame(height: 41).background(D.inset.opacity(0.6))
             Divider()
             NativeFileBrowser(model: model)
@@ -318,15 +659,16 @@ struct BrowserView: View {
             Spacer()
         }.frame(maxWidth: .infinity, maxHeight: .infinity).harborSurface(radius: 17)
     }
-    private func fileIcon(_ item: VaultItem, small: Bool) -> some View {
-        Image(systemName: item.symbol).font(.system(size: small ? 17 : 24)).foregroundStyle(item.isFolder ? D.amber : Color.secondary)
-            .frame(width: small ? 32 : 46, height: small ? 32 : 46).background(item.isFolder ? D.amber.opacity(0.10) : D.inset, in: RoundedRectangle(cornerRadius: small ? 9 : 13))
-    }
-    private func kind(_ item: VaultItem) -> String { item.isFolder ? "Folder" : (item.name as NSString).pathExtension.isEmpty ? "File" : (item.name as NSString).pathExtension.uppercased() + " file" }
-    private func path(for item: VaultItem) -> String {
-        var names: [String] = []; var id = item.parent
-        while let current = id, let parent = model.manifest.items.first(where: { $0.id == current }) { names.insert(parent.name, at: 0); id = parent.parent }
-        return names.isEmpty ? "All files" : names.joined(separator: " / ")
+    private func sortColumn(_ label: String, order: FileSort) -> some View {
+        Button { sort.wrappedValue = order } label: {
+            HStack(spacing: 4) {
+                Text(label)
+                if sort.wrappedValue == order {
+                    Image(systemName: order == .newest || order == .largest ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+            }
+        }.buttonStyle(.plain).help("Sort by \(order.rawValue.lowercased())")
     }
 }
 
@@ -345,6 +687,12 @@ struct PreferencesView: View {
             VStack(alignment: .leading, spacing: 14) {
                 preferenceLabel("Appearance", detail: "Choose a light or charcoal workspace.")
                 HStack(spacing: 10) { themeOption("light", title: "Light"); themeOption("dark", title: "Dark"); themeOption("system", title: "System") }
+                HStack {
+                    preferenceLabel("Liquid Glass", detail: liquidGlassDescription)
+                    Spacer()
+                    Toggle("Liquid Glass", isOn: $model.liquidGlass).labelsHidden().toggleStyle(.switch)
+                        .disabled(!HarborGlassAvailability.supported)
+                }
             }
             Rectangle().fill(D.border).frame(height: 1)
             HStack {
@@ -374,8 +722,24 @@ struct PreferencesView: View {
                         .background(D.inset, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(D.border, lineWidth: 1))
                 }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Auto-lock")
             }
-            HStack { Text("Changes save automatically.").font(D.font(10)).foregroundStyle(.tertiary); Spacer(); Button("Done") { model.showSettings = false }.buttonStyle(HarborButtonStyle(primary: true)) }.padding(.top, 5)
-        }.padding(32).frame(width: 570).background(D.surface).preferredColorScheme(model.appearance == "system" ? nil : model.appearance == "dark" ? .dark : .light)
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(HarborCredits.author).font(D.font(12, .medium))
+                    Link(destination: HarborCredits.github) {
+                        Label("GitHub · arjun1223", systemImage: "arrow.up.right")
+                            .font(D.font(11))
+                    }
+                    .help(HarborCredits.github.absoluteString)
+                }
+                Spacer()
+                Button("Done") { model.showSettings = false }.buttonStyle(HarborButtonStyle(primary: true))
+            }.padding(.top, 5)
+        }.padding(32).frame(width: 570).background { HarborBackdrop() }.preferredColorScheme(model.appearance == "system" ? nil : model.appearance == "dark" ? .dark : .light)
+    }
+    private var liquidGlassDescription: String {
+        guard HarborGlassAvailability.supported else { return "Requires macOS 26 or later." }
+        if #available(macOS 27, *) { return "Glass intensity follows macOS System Settings." }
+        return "Apple’s glass controls and a softly blurred window."
     }
     private func preferenceLabel(_ title: String, detail: String) -> some View { VStack(alignment: .leading, spacing: 5) { Text(title).font(D.font(12, .medium)); Text(detail).font(D.font(10)).foregroundStyle(.secondary) } }
     private func themeOption(_ value: String, title: String) -> some View {

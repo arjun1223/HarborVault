@@ -4,12 +4,24 @@ import CoreGraphics
 import CoreText
 
 enum ThumbnailRenderer {
-    static func supports(_ name: String) -> Bool {
+    static func hasKnownExtension(_ name: String) -> Bool {
         ["png","jpg","jpeg","heic","heif","gif","tif","tiff","bmp","webp","pdf","txt","md","csv","json","log","swift","py","js","html","css","xml","yaml","yml","rtf"].contains((name as NSString).pathExtension.lowercased())
     }
-    static func render(_ data: Data, name: String, pixels: Int = 512) -> NSImage? {
-        let ext = (name as NSString).pathExtension.lowercased()
-        if ext == "pdf", let provider = CGDataProvider(data: data as CFData), let doc = CGPDFDocument(provider), let page = doc.page(at: 1) {
+    private static func hasPDFHeader(_ data: Data) -> Bool {
+        Data(data.prefix(1024)).range(of: Data("%PDF-".utf8)) != nil
+    }
+    static func canRenderPrefix(_ data: Data, totalSize: Int64) -> Bool {
+        if hasPDFHeader(data) { return true }
+        if let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetType(source) != nil {
+            return true
+        }
+        guard totalSize <= 2 * 1024 * 1024 else { return false }
+        // A complete UTF-8 decode is still required by render.
+        return !data.contains(0)
+    }
+    static func render(_ data: Data, pixels: Int = 512) -> NSImage? {
+        if hasPDFHeader(data), let provider = CGDataProvider(data: data as CFData),
+           let doc = CGPDFDocument(provider), doc.isUnlocked, let page = doc.page(at: 1) {
             let box = page.getBoxRect(.cropBox)
             guard box.width > 0, box.height > 0 else { return nil }
             let scale = CGFloat(pixels) / max(box.width, box.height)
@@ -65,7 +77,7 @@ enum ThumbnailRenderer {
     private var session = UUID()
     init() { cache.totalCostLimit = 96 * 1024 * 1024; cache.countLimit = 240 }
     func request(_ item: VaultItem, load: @escaping @Sendable () throws -> Data, completion: @escaping (NSImage?) -> Void) {
-        guard !item.isFolder, item.size <= 50 * 1024 * 1024, ThumbnailRenderer.supports(item.name) else { completion(nil); return }
+        guard !item.isFolder, item.size <= 50 * 1024 * 1024 else { completion(nil); return }
         if let cached = cache.object(forKey: item.id as NSUUID) { completion(cached); return }
         if unavailable.contains(item.id) { completion(nil); return }
         if pending[item.id] != nil { pending[item.id]?.append(completion); return }
@@ -76,7 +88,7 @@ enum ThumbnailRenderer {
             guard work?.isCancelled == false else { return }
             let image: NSImage? = autoreleasepool {
                 guard let data = try? load(), work?.isCancelled == false else { return nil }
-                return ThumbnailRenderer.render(data, name: item.name)
+                return ThumbnailRenderer.render(data)
             }
             guard work?.isCancelled == false else { return }
             Task { @MainActor [weak self] in

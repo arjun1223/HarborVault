@@ -19,15 +19,9 @@ final class VaultShareFiles: @unchecked Sendable {
         for request in requested {
             try Task.checkCancellation()
             guard let item = manifest.items.first(where: { $0.id == request.id }) else { throw VaultError.message("A selected item is no longer available. Sharing was cancelled.") }
-            var name = item.name; var counter = 2
-            while FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) {
-                let ext = (item.name as NSString).pathExtension
-                let base = ext.isEmpty ? item.name : (item.name as NSString).deletingPathExtension
-                name = "\(base) (\(counter))" + (ext.isEmpty ? "" : "." + ext); counter += 1
-            }
-            let url = folder.appendingPathComponent(name)
-            try storage.export(item, to: url, manifest: manifest, vaultID: vaultID, key: key)
-            urls.append(url)
+            let destination = folder.appendingPathComponent(item.name)
+            urls.append(try storage.export(item, to: destination, manifest: manifest, vaultID: vaultID,
+                                           key: key, uniquingName: true))
         }
         try Task.checkCancellation()
         completed = true

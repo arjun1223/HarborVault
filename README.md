@@ -14,7 +14,7 @@
 
 ## Download
 
-**[Download Harbor Vault for Mac](https://github.com/arjun1223/HarborVault/releases/latest)** from the latest release. Open `HarborVault-1.3.1-macOS-arm64.dmg`, drag **Harbor Vault.app** into **Applications**, then eject the disk image and open the app.
+**[Download Harbor Vault for Mac](https://github.com/arjun1223/HarborVault/releases/latest)** from the latest release. Open `HarborVault-1.4.6-macOS-arm64.dmg`, drag **Harbor Vault.app** into **Applications**, then eject the disk image and open the app.
 
 The download supports **Apple silicon Macs running macOS 14 or newer**. Intel Macs are not supported by this build. The release includes `SHA256SUMS.txt` to verify the DMG download.
 
@@ -25,20 +25,22 @@ This is an early public build, **ad-hoc signed and not Apple-notarized**. macOS 
 | Feature | What you get |
 | --- | --- |
 | Separate vaults | Independent encryption keys, names, and passcodes for each vault |
-| Mac authentication | Optional Touch ID / Mac login password, or a vault’s own passcode |
-| Familiar browsing | List and grid views, folders, filename search, back/forward navigation |
+| Mac authentication | Inline Touch ID, Mac login password, or a vault’s own passcode |
+| Familiar browsing | List and grid views, folders, filename search, sorting, and back/forward navigation |
 | Selection | Shift/Command selection, keyboard navigation, and drag-to-select rectangles |
 | Previews | Space for a small preview; double-click for a separate viewer with a selected-file sidebar |
 | Text recognition | Select and copy text directly from images, or extract text from scanned PDFs |
 | Image and PDF zoom | Two-finger pinch, zoom buttons, Fit, and panning |
+| Drag actions | Move into folders or breadcrumb locations, or drop onto sidebar actions for Trash, Share, and Export |
+| Video | Play supported MP4 and MOV files directly from encrypted storage |
 | Private viewer | Leaving the full viewer locks that window; closing previews keeps the vault open |
 | Verified import | Finder files/folders, direct screenshot thumbnails, and image drops; verify before offering to trash Finder originals |
 | Recently Deleted | Per-vault recovery, adjustable retention, individual deletion dates, and restore locations |
 | Vault transfers | Move one copy or duplicate into another vault after destination verification |
 | Sharing | Fresh verification before the native AirDrop, Messages, or other Mac sharing picker |
-| Preferences | Light/dark/system appearance, text size, thumbnail size, and density |
+| Preferences | Light/dark/system appearance, optional native Liquid Glass, text size, thumbnail size, and density |
 
-Images, PDFs, and small UTF-8 text have in-app previews. Other file types can be stored, browsed together, shared, and exported; they display file information when an in-app preview is unavailable. Preview input is limited to 50 MB and text display to 2 MB.
+Images, PDFs, and small UTF-8 text have in-app previews. Supported videos play in either preview. Other file types can be stored, browsed together, shared, and exported; they display file information when an in-app preview is unavailable. Image, PDF, and text preview input is limited to 50 MB and text display to 2 MB. Videos stream from encrypted storage.
 
 ## First-time setup
 

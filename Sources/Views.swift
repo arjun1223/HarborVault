@@ -118,7 +118,9 @@ struct PreviewView: View {
             HStack { Image(systemName: content.item.symbol).foregroundStyle(accent); Text(content.item.name).font(.harbor(size: 13, weight: .medium)).lineLimit(1); Spacer(); Button("Done") { model.preview = nil }.keyboardShortcut(.cancelAction) }.padding(18)
             Divider()
             Group {
-                if (content.item.name as NSString).pathExtension.lowercased() == "pdf", let doc = PDFDocument(data: content.data) {
+                if let video = content.video {
+                    VideoPreviewView(video: video)
+                } else if (content.item.name as NSString).pathExtension.lowercased() == "pdf", let doc = PDFDocument(data: content.data) {
                     MemoryPDFView(document: doc)
                 } else if let image = NSImage(data: content.data) {
                     Image(nsImage: image).resizable().scaledToFit().padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -41,7 +41,7 @@ enum TextRecognition {
     static let rasterLimit = 3072
     static let pageLimit = 500
     static func supports(_ content: PreviewContent) -> Bool {
-        guard !content.item.isFolder else { return false }
+        guard !content.item.isFolder, content.video == nil else { return false }
         if (content.item.name as NSString).pathExtension.lowercased() == "pdf" { return true }
         guard let source = CGImageSourceCreateWithData(content.data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return false }
         return CGImageSourceGetType(source) != nil && CGImageSourceGetCount(source) > 0

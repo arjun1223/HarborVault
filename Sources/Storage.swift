@@ -1,6 +1,8 @@
 import Foundation
 import CryptoKit
 import Darwin
+import ImageIO
+import UniformTypeIdentifiers
 
 struct VaultHeader: Codable, Identifiable {
     var version = 1
@@ -325,35 +327,84 @@ final class VaultStorage: @unchecked Sendable {
             }
         }
     }
-    func preview(_ item: VaultItem, vaultID: UUID, key: SymmetricKey) throws -> Data {
+    func preview(_ item: VaultItem, vaultID: UUID, key: SymmetricKey,
+                 acceptingFirstChunk: ((Data) -> Bool)? = nil) throws -> Data {
         guard !item.isFolder, item.size <= 50 * 1024 * 1024 else { throw VaultError.message("Preview supports files up to 50 MB. Export this file to open it in another app.") }
         var data = Data()
-        let digest = try VaultCrypto.decryptFile(source: object(vaultID, item.id), key: key, vaultID: vaultID, fileID: item.id) { data.append($0) }
+        let digest = try VaultCrypto.decryptFile(source: object(vaultID, item.id), key: key, vaultID: vaultID, fileID: item.id) { chunk in
+            if data.isEmpty, let acceptingFirstChunk, !acceptingFirstChunk(chunk) {
+                throw VaultError.message("This file has no thumbnail.")
+            }
+            data.append(chunk)
+        }
         guard digest == item.digest else { throw VaultError.message("This file failed verification.") }
         return data
     }
-    func export(_ item: VaultItem, to destination: URL, manifest: VaultManifest, vaultID: UUID, key: SymmetricKey) throws {
+    func suggestedExportName(_ item: VaultItem, vaultID: UUID, key: SymmetricKey) throws -> String {
+        guard !item.isFolder else { return item.name }
+        enum PrefixRead: Error { case finished(String) }
+        do {
+            try VaultCrypto.decryptFile(source: object(vaultID, item.id), key: key, vaultID: vaultID, fileID: item.id) { chunk in
+                let source = CGImageSourceCreateWithData(chunk as CFData, nil)
+                throw PrefixRead.finished(Self.imageFilename(item.name, source: source))
+            }
+            return item.name
+        } catch PrefixRead.finished(let name) {
+            return name
+        }
+    }
+
+    @discardableResult
+    func export(_ item: VaultItem, to destination: URL, manifest: VaultManifest, vaultID: UUID, key: SymmetricKey, uniquingName: Bool = false) throws -> URL {
         let resolved = destination.resolvingSymlinksInPath().standardizedFileURL.path
         let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
         guard resolved != rootPath, !resolved.hasPrefix(rootPath + "/") else { throw VaultError.message("Export to a location outside the encrypted storage.") }
-        guard !FileManager.default.fileExists(atPath: destination.path) else { throw VaultError.message("A file already exists there. Choose another name.") }
-        let stage = destination.deletingLastPathComponent().appendingPathComponent(".harbor-export-" + UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: stage) }
-        func write(_ entry: VaultItem, to url: URL) throws {
+        let files = FileManager.default
+        func copy(_ entry: VaultItem, to preferred: URL, unique: Bool) throws -> URL {
+            try Task.checkCancellation()
+            let folder = preferred.deletingLastPathComponent()
+            let stage = folder.appendingPathComponent(".harbor-export-" + UUID().uuidString)
+            defer { try? files.removeItem(at: stage) }
+            var name = preferred.lastPathComponent
             if entry.isFolder {
-                try Self.directory(url)
-                for child in manifest.items.filter({ $0.parent == entry.id && $0.isDeleted == entry.isDeleted && (!$0.isDeleted || $0.trashRootID == entry.trashRootID) }) { try write(child, to: url.appendingPathComponent(child.name)) }
+                try Self.directory(stage)
+                for child in manifest.items where child.parent == entry.id && child.isDeleted == entry.isDeleted && (!child.isDeleted || child.trashRootID == entry.trashRootID) {
+                    _ = try copy(child, to: stage.appendingPathComponent(child.name), unique: true)
+                }
             } else {
-                guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { throw VaultError.message("Could not create exported file.") }
-                let out = try FileHandle(forWritingTo: url); defer { try? out.close() }
+                guard files.createFile(atPath: stage.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { throw VaultError.message("Could not create exported file.") }
+                let out = try FileHandle(forWritingTo: stage); defer { try? out.close() }
                 let hash = try VaultCrypto.decryptFile(source: object(vaultID, entry.id), key: key, vaultID: vaultID, fileID: entry.id) { try out.write(contentsOf: $0) }
                 guard hash == entry.digest else { throw VaultError.message("The encrypted file failed verification. Export was cancelled.") }
                 try out.synchronize()
+                name = Self.imageFilename(name, source: CGImageSourceCreateWithURL(stage as CFURL, nil))
             }
+            let ext = (name as NSString).pathExtension
+            let stem = ext.isEmpty ? name : (name as NSString).deletingPathExtension
+            var url = folder.appendingPathComponent(name, isDirectory: entry.isFolder)
+            var number = 2
+            while files.fileExists(atPath: url.path) {
+                guard unique else { throw VaultError.message("A file already exists there. Choose another name.") }
+                let numbered = "\(stem) (\(number))" + (ext.isEmpty ? "" : "." + ext)
+                url = folder.appendingPathComponent(numbered, isDirectory: entry.isFolder)
+                number += 1
+            }
+            try Task.checkCancellation()
+            try files.moveItem(at: stage, to: url)
+            return url
         }
-        try write(item, to: stage)
-        try Task.checkCancellation()
-        try FileManager.default.moveItem(at: stage, to: destination)
+        return try copy(item, to: destination, unique: uniquingName)
+    }
+    private static func imageFilename(_ name: String, source: CGImageSource?) -> String {
+        guard let source, let identifier = CGImageSourceGetType(source),
+              let type = UTType(identifier as String), type.conforms(to: .image),
+              let imageExtension = type.preferredFilenameExtension,
+              // Some legacy formats, such as TGA, can be guessed from arbitrary binary data.
+              ["png", "jpg", "jpeg", "gif", "tif", "tiff", "heic", "heif", "bmp", "webp"].contains(imageExtension)
+        else { return name }
+        let currentExtension = (name as NSString).pathExtension.lowercased()
+        if UTType(filenameExtension: currentExtension) == type { return name }
+        return name + "." + imageExtension
     }
     func remove(_ item: VaultItem, manifest: VaultManifest, vaultID: UUID, key: SymmetricKey) throws -> VaultManifest {
         try removeItems([item], manifest: manifest, vaultID: vaultID, key: key)

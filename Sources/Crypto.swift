@@ -110,30 +110,87 @@ enum VaultCrypto {
         try output.synchronize()
         return (Int64(length), Data(hash.finalize()))
     }
-    @discardableResult static func decryptFile(source: URL, key: SymmetricKey, vaultID: UUID, fileID: UUID, consume: (Data) throws -> Void) throws -> Data {
-        let input = try FileHandle(forReadingFrom: source)
-        defer { try? input.close() }
-        let header = try read(input, 24)
+    private static func fileLength(header: Data) throws -> UInt64 {
         guard header.prefix(8) == Data("HARBOR01".utf8) else { throw VaultError.message("Unknown encrypted file format.") }
         let length = integer(header.subdata(in: 8..<16))
         let chunks = integer(header.subdata(in: 16..<24))
         guard length <= UInt64(Int64.max) - UInt64(chunkSize), chunks == max(1, (length + UInt64(chunkSize) - 1) / UInt64(chunkSize)) else { throw VaultError.message("Invalid encrypted file header.") }
+        return length
+    }
+
+    private static func decryptChunk(_ input: FileHandle, key: SymmetricKey, identity: Data, header: Data, index: UInt64, size: UInt64) throws -> Data {
+        let count = integer(try read(input, 8))
+        guard count == size + 28 else { throw VaultError.message("Invalid encrypted file chunk.") }
+        let sealed = try read(input, Int(count))
+        let aad = identity + header + u64(index)
+        return try AES.GCM.open(AES.GCM.SealedBox(combined: sealed), using: key, authenticating: aad)
+    }
+
+    @discardableResult static func decryptFile(source: URL, key: SymmetricKey, vaultID: UUID, fileID: UUID, consume: (Data) throws -> Void) throws -> Data {
+        let input = try FileHandle(forReadingFrom: source)
+        defer { try? input.close() }
+        let header = try read(input, 24)
+        let length = try fileLength(header: header)
+        let chunks = integer(header.subdata(in: 16..<24))
+        let identity = Data((vaultID.uuidString + "/" + fileID.uuidString).utf8)
         var hash = SHA256()
         var total: UInt64 = 0
         for index in 0..<chunks {
             try Task.checkCancellation()
-            let count = integer(try read(input, 8))
             let expected = min(UInt64(chunkSize), length - total)
-            guard count == expected + 28 else { throw VaultError.message("Invalid encrypted file chunk.") }
-            let sealed = try read(input, Int(count))
-            let aad = Data((vaultID.uuidString + "/" + fileID.uuidString).utf8) + header + u64(index)
-            let data = try AES.GCM.open(AES.GCM.SealedBox(combined: sealed), using: key, authenticating: aad)
+            let data = try decryptChunk(input, key: key, identity: identity, header: header, index: index, size: expected)
             total += UInt64(data.count)
             hash.update(data: data)
             try consume(data)
         }
         guard total == length, (try input.read(upToCount: 1) ?? Data()).isEmpty else { throw VaultError.message("The encrypted file failed its length check.") }
         return Data(hash.finalize())
+    }
+
+    // AVFoundation seeks into encrypted files without creating a readable copy on disk.
+    // The caller confines this reader to one queue.
+    final class ChunkReader {
+        let length: Int64
+        private let input: FileHandle
+        private let key: SymmetricKey
+        private let identity: Data
+        private let header: Data
+        private var cachedIndex: UInt64?
+        private var cachedBytes = Data()
+
+        init(source: URL, key: SymmetricKey, vaultID: UUID, fileID: UUID, expectedSize: Int64) throws {
+            self.key = key
+            identity = Data((vaultID.uuidString + "/" + fileID.uuidString).utf8)
+            input = try FileHandle(forReadingFrom: source)
+            do {
+                header = try read(input, 24)
+                length = Int64(try fileLength(header: header))
+                let chunkCount = integer(header.subdata(in: 16..<24))
+                let expectedLength = 24 + UInt64(length) + chunkCount * 36
+                guard length == expectedSize, try input.seekToEnd() == expectedLength else {
+                    throw VaultError.message("The encrypted video failed its length check.")
+                }
+            } catch {
+                try? input.close()
+                throw error
+            }
+        }
+
+        deinit { try? input.close() }
+
+        func readBytes(at offset: Int64, upTo count: Int) throws -> Data {
+            guard offset >= 0, offset <= length, count >= 0 else { throw VaultError.message("Invalid video byte range.") }
+            guard offset < length, count > 0 else { return Data() }
+            let index = UInt64(offset) / UInt64(chunkSize)
+            if cachedIndex != index {
+                let size = min(UInt64(chunkSize), UInt64(length) - index * UInt64(chunkSize))
+                try input.seek(toOffset: 24 + index * UInt64(chunkSize + 36))
+                cachedBytes = try decryptChunk(input, key: key, identity: identity, header: header, index: index, size: size)
+                cachedIndex = index
+            }
+            let start = Int(offset % Int64(chunkSize))
+            return cachedBytes.subdata(in: start..<(start + min(count, cachedBytes.count - start)))
+        }
     }
     @discardableResult static func reencryptFile(source: URL, destination: URL, sourceKey: SymmetricKey, destinationKey: SymmetricKey, sourceVaultID: UUID, destinationVaultID: UUID, sourceFileID: UUID, destinationFileID: UUID, expectedSize: Int64, expectedDigest: Data) throws -> Data {
         guard expectedSize >= 0, expectedDigest.count == 32 else { throw VaultError.message("Invalid source file metadata.") }

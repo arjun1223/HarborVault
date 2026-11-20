@@ -20,6 +20,12 @@ Items in Trash remain readable until you empty it. The app does not empty Trash.
 
 ## Use your vault
 
+Harbor Vault starts inline Touch ID when you choose a vault with Mac unlock enabled or when that vault locks from inactivity. **Use Vault Password…** opens the vault’s passcode field. **Use Mac Password…** opens the macOS dialog. The full viewer requests verification through macOS when you return after its contents lock. After an explicit lock or sleep, select the vault again to start authentication.
+
+In **Preferences → Appearance**, turn on **Liquid Glass** for native glass controls and a blurred view of what’s behind the window. It works with Light, Dark, and System appearance. It requires macOS 26 or later. On macOS 27 and later, change the intensity with the Liquid Glass slider in **System Settings → Appearance**. Reduce Transparency uses solid surfaces.
+
+Press **⌘F** to search filenames. Use the sort menu in either view, or click a column heading in list view. Recently Deleted can sort by scheduled deletion date.
+
 - Create more vaults with the **+** beside Your Vaults or **File → New vault** (⌘N). Each has a separate passcode and random encryption key.
 - Choose a vault in the sidebar to switch. Switching locks the current vault.
 - Double-click a folder to open it. Use the breadcrumb bar to go back.
@@ -27,6 +33,7 @@ Items in Trash remain readable until you empty it. The app does not empty Trash.
 - Files open in a table by default; use the list/grid controls to change views. Right-click a file or folder to preview, export, rename, move, or delete it.
 - Grid view shows actual image, first-page PDF, and text thumbnails where supported. Use the bottom-right slider to adjust thumbnail size. Thumbnails are generated in memory and cleared when locked; unsupported or oversized files use their file-type icons.
 - Shift-click selects a range, Command-click toggles individual items, and dragging a rectangle from empty browser space selects the intersecting items. Hold Shift to add to the selection or Command to toggle it. ⌘A selects the current visible files. Arrow keys move selection; Shift-arrow extends it.
+- Drag selected items onto a folder to move them. After moving the pointer 10 points, a stacked preview shows the selection count and the sidebar fades into Quick Actions. Drop on Move to Trash, Share, Export, or Move to All Files. The trash lid opens on hover. Releasing over Trash moves the selection into Recently Deleted immediately. Releasing elsewhere restores the sidebar.
 - Back/forward buttons and ⌘[/⌘] restore folder visits and searches. ⌘↑ opens the enclosing folder.
 - Single-click a file to select it immediately. Single-clicking never opens a preview. Shift/Command selection clicks also select without opening popovers.
 - Double-click a file for the larger, separate viewer. Double-click within a multiple selection to open that selected group together, with a thumbnail sidebar. Different file types can coexist in the same window. Images, PDFs, and small UTF-8 text render in the app; other formats appear with their file information and a preview-unavailable message.
@@ -36,8 +43,8 @@ Items in Trash remain readable until you empty it. The app does not empty Trash.
 - Pinch with two fingers to zoom image/PDF previews in either preview size. Two-finger scrolling pans zoomed images; the native image viewport also supports smart zoom. The full viewer’s zoom buttons and Fit control stay synchronized with native zoom. Zoom is bounded to 25%–500% relative to the fitted image/page size.
 - Dismissing either preview clears its readable content and **keeps the vault unlocked**. Switching away from the separate full viewer locks **only that viewer window** and clears its readable contents. The vault browser stays unlocked. Returning to that viewer requires fresh Touch ID / Mac password verification when enabled, or the vault’s own passcode. The small popover dismisses when the app becomes inactive. Ordinary folder navigation stays inside the browser window, and normal vault idle/sleep locking still applies.
 - Open **Preferences** at the bottom of the sidebar (⌘,) for Light, Dark, or System appearance; Small, Standard, or Large text; and Compact or Comfortable density. These choices save automatically.
-- Preview images, PDFs, and small UTF-8 text files in the app. Other formats can be exported. Preview input is limited to 50 MB; text display is limited to 2 MB.
-- **Export** (⌘E) creates a decrypted copy outside the vault. That copy is readable normally in Finder and other apps. Existing destination files are never overwritten; choose another name.
+- Preview images, PDFs, and small UTF-8 text files in the app. Play supported videos such as MP4 and MOV in either preview. Videos stream from encrypted storage. Image, PDF, and text preview input is limited to 50 MB, and text display is limited to 2 MB.
+- **Export** (⌘E) creates a decrypted copy outside the vault. Click **Show in Finder** in the completion message to reveal the file or batch folder. Choose a different filename if the destination already exists.
 - **Lock** (⌘L) clears the current catalog, selection, search, key reference, and preview. Vaults also lock on sleep, screen lock, user-session change, and after 5 minutes without interaction in the app. Change the idle interval in Preferences.
 - The **…** menu changes the current vault’s passcode or enables/disables Mac unlock.
 - To rename a vault, unlock it and choose **Rename vault…** from its sidebar context menu, the **…** menu, or the Vault menu. This changes its visible label only.
@@ -73,6 +80,8 @@ Then type **`DELETE <vault name>`**, including the exact current name and capita
 
 Select files and choose the Share button or **Share… (verify identity)** in their context menu. The preview window also has a Share button: it shares the explicitly selected group for a grouped preview, or just the current file for a single-file preview.
 
+The verification sheet starts inline Touch ID automatically when the vault supports Mac unlock. It also accepts the vault’s passcode or Mac authentication. After verification, choose where to share the files.
+
 Sharing locks the browser and requires fresh authentication. After verification, choose **Choose where to share…** to open the native macOS share picker. The services offered depend on your Mac and selected file types. You choose the destination, recipients, and any final Send action yourself.
 
 macOS sharing services require readable file URLs. The app therefore creates verified plaintext copies in an owner-only temporary directory **after authentication**. It removes them after the service reports completion, failure, or cancellation. A service that has already received the copies may retain its own copies; locking cannot recall a share already handed to macOS. If the app crashes, temporary share copies may remain until the next successful app launch, when stale copies are cleaned up. The app does not automatically send anything, select a recipient, or empty Trash.
@@ -103,7 +112,7 @@ Changing a passcode or removing Mac unlock changes the current header. Older bac
 - A random 256-bit key per vault. Passcode wrapping uses PBKDF2-HMAC-SHA256 with a random 32-byte salt and 600,000 iterations.
 - Mac unlock uses a Secure Enclave P-256 key with `.privateKeyUsage` and `.userPresence` access control. An ephemeral ECDH key and HKDF-SHA256 derive a wrapping key. The hardware-bound private-key representation is opaque, not an exported private key. There is no plaintext vault key stored in preferences or on disk.
 - File data and the encrypted catalog are staged and verified before the catalog is atomically committed. File operations run off the UI thread. Late operation results are discarded after locking.
-- Preview data is supplied from memory to native image/PDF/text views. The app does not explicitly write decrypted preview files, use Quick Look, or create an external search index. Exports intentionally write plaintext to your selected destination.
+- Preview data is supplied from memory to native image, PDF, text, and video views. For video, the app decrypts and authenticates only the chunks the player requests. Exports write a readable copy to your selected destination.
 - Sharing intentionally creates temporary plaintext copies after fresh authentication, as described above. Its separate authentication permit is bound to the vault and settings, expires after 60 seconds, and is cleared on cancellation, locking, or session changes.
 - Storage directories use owner-only permissions. A process lock prevents two instances from concurrently editing the same store.
 
