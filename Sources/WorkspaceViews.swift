@@ -37,6 +37,8 @@ struct RootView: View {
             if phase == .background { model.cancelInlineTouchID() }
         }
         .sheet(isPresented: $model.showCreate) { CreateVaultView() }
+        .sheet(item: $model.portableImport) { PortableImportView(request: $0) }
+        .sheet(item: $model.portableExport) { PortableExportView(receipt: $0) }
         .sheet(isPresented: $model.showPasscodeSettings) { PasscodeSettingsView() }
         .sheet(isPresented: $model.showSettings) { PreferencesView() }
         .sheet(item: $model.protectedAction) { ProtectedActionView(request: $0) }
@@ -44,7 +46,7 @@ struct RootView: View {
         .sheet(item: $model.restoreRequest) { RestoreItemsView(request: $0) }
         .sheet(item: $model.transferRequest) { VaultTransferView(request: $0) }
         .sheet(item: Binding(get: { model.importResult.map(ImportSheetItem.init) }, set: { if $0 == nil { model.importResult = nil } })) { ImportCompleteView(result: $0.result) }
-        .alert("Harbor Vault", isPresented: Binding(get: { model.error != nil && !model.showCreate && !model.showPasscodeSettings && model.protectedAction == nil && model.trashDateEdit == nil && model.restoreRequest == nil && model.transferRequest == nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
+        .alert("Harbor Vault", isPresented: Binding(get: { model.error != nil && !model.showCreate && model.portableImport == nil && !model.showPasscodeSettings && model.protectedAction == nil && model.trashDateEdit == nil && model.restoreRequest == nil && model.transferRequest == nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
         .overlay(alignment: .bottom) {
             if let notice = model.notice {
                 HStack(spacing: 10) {
@@ -117,6 +119,8 @@ struct SidebarView: View {
                             .disabled(model.busy)
                             .contextMenu {
                                 Button("Rename vault…") { model.renameVault(vault) }.disabled(model.busy || !model.unlocked || model.selectedVaultID != vault.id)
+                                Button("Export portable vault…") { model.exportPortable() }.disabled(model.busy || !model.unlocked || model.selectedVaultID != vault.id)
+                                Button("Export public vault…") { model.exportPortable(publiclyReadable: true) }.disabled(model.busy || !model.unlocked || model.selectedVaultID != vault.id)
                                 Button("Delete vault…", role: .destructive) { model.beginDeleteVault(vault) }.disabled(model.busy)
                             }
                     }

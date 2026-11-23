@@ -7,6 +7,7 @@ fi
 SWIFTC="$(/usr/bin/xcrun --find swiftc)"
 SDK="${SDKROOT:-$(/usr/bin/xcrun --sdk macosx --show-sdk-path)}"
 DESTINATION="${HARBOR_APP_OUTPUT:-output/Harbor Vault.app}"
+SIGNING_IDENTITY="$(bash Tools/SigningIdentity.sh)"
 APP="output/.Harbor-build-$$-$RANDOM.app"
 trap 'if [ -d "$APP" ]; then rm -rf "$APP"; fi' EXIT
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" .module-cache
@@ -18,6 +19,6 @@ cp -R Resources/Fonts "$APP/Contents/Resources/"
 cp -R Resources/Licenses "$APP/Contents/Resources/"
 if [ -f README.md ]; then cp README.md "$APP/Contents/Resources/README.md"; fi
 if [ -f output/HarborVault.icns ]; then cp output/HarborVault.icns "$APP/Contents/Resources/HarborVault.icns"; fi
-codesign --force --sign - --options runtime "$APP"
+codesign --force --sign "$SIGNING_IDENTITY" --identifier com.harborvault.mac --options runtime "$APP"
 python3 Tools/PublishApp.py "$APP" "$DESTINATION"
 

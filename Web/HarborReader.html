@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-pifNyJ9+OFRnL+bIi//icmXLtf16G+668UYiOr0As7M=' 'sha256-/KexRns7Hc2m8q5MO6XxFnT4TeabCDx2wW+LdE3Yk+w='; style-src 'unsafe-inline'; img-src blob:; media-src blob:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Harbor Reader</title>
+<style>
+:root{color-scheme:light dark;--bg:#f5f4f1;--surface:#fff;--soft:#f0efeb;--ink:#252625;--muted:#747570;--line:#deded7;--accent:#e5a122;--hover:#f7eacb;--bad:#b33b38;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}button,input{font:inherit}button{cursor:pointer;color:inherit}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:3px}[hidden]{display:none!important}.app{display:grid;grid-template-columns:235px minmax(0,1fr);min-height:100vh}.sidebar{border-right:1px solid var(--line);padding:32px 22px;display:flex;flex-direction:column;gap:30px;background:var(--soft)}.brand{display:flex;align-items:center;gap:12px;font-size:21px;font-weight:700;letter-spacing:-.7px}.logo{display:grid;place-items:center;background:#252827;color:#efb037;width:43px;height:43px;border-radius:14px}.icon{width:22px;height:22px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}.muted{color:var(--muted)}.small{font-size:12px;line-height:1.6}.eyebrow{text-transform:uppercase;letter-spacing:1.8px;font-weight:650;font-size:10px;color:var(--muted)}.nav{border:0;background:var(--surface);padding:13px;border-radius:13px;text-align:left;display:flex;gap:10px;align-items:center;font-weight:600;width:100%}.sidebar .bottom{margin-top:auto}.sidebar a{color:inherit;text-underline-offset:3px}.main{padding:34px 42px;min-width:0}header{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:34px}h1{font-size:25px;letter-spacing:-.8px;margin:7px 0;overflow-wrap:anywhere}h2{font-size:24px;letter-spacing:-.7px;margin:18px 0 10px}p{line-height:1.6}.pill{border:1px solid var(--line);border-radius:30px;padding:7px 11px;font-size:12px;white-space:nowrap;display:inline-flex;gap:6px;align-items:center}.pill .dot{width:6px;height:6px;border-radius:50%;background:#668c65}.btn{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:10px 15px;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:13px;font-weight:600}.btn:hover:not(:disabled){background:var(--soft)}.btn.primary{background:var(--accent);border-color:transparent;color:#292219}.btn.primary:hover:not(:disabled){background:#edb447}.lock{display:flex;gap:12px;align-items:center}.card{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:32px;max-width:530px;margin:7vh auto 0;box-shadow:0 8px 30px #00000004}.large-logo{height:62px;width:62px;border-radius:20px}.large-logo .icon{width:32px;height:32px}.card>p{font-size:14px;color:var(--muted);margin-bottom:25px}.drop{border:1px dashed var(--line);border-radius:15px;padding:20px;margin-bottom:22px;background:var(--bg);text-align:center}.drop.over{border-color:var(--accent);background:var(--hover)}.drop .btn{margin:10px 0}.file-name{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.field-label{display:block;font-size:12px;font-weight:650;margin:16px 0 8px}.input-wrap{display:flex;border:1px solid var(--line);border-radius:12px;background:var(--bg);overflow:hidden}.input-wrap:focus-within{outline:2px solid var(--accent)}input[type=password],input[type=text],input[type=search]{border:0;background:transparent;color:inherit;padding:13px;min-width:0;width:100%;outline:none}.reveal{border:0;background:transparent;padding:0 13px;min-width:50px;color:var(--muted);font-size:12px}.actions{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:18px;flex-wrap:wrap}.wide{width:100%;margin-top:20px;padding:13px}.error{color:var(--bad);font-size:13px;line-height:1.5;overflow-wrap:anywhere}.note{border-top:1px solid var(--line);padding-top:18px;margin-top:22px;color:var(--muted);font-size:11px;line-height:1.65}.toolbar{display:flex;gap:14px;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap}.crumbs{display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:13px}.crumbs button{background:none;border:0;padding:5px;color:var(--muted);border-radius:6px}.crumbs button:hover{color:var(--ink);background:var(--soft)}.search{display:flex;align-items:center;border:1px solid var(--line);background:var(--surface);border-radius:13px;padding-left:13px;width:260px}.files{border:1px solid var(--line);border-radius:17px;overflow:hidden;background:var(--surface)}.row{display:grid;grid-template-columns:42px minmax(0,1fr) 90px 105px;align-items:center;gap:10px;padding:13px 18px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row.header{font-size:11px;color:var(--muted);background:var(--soft);padding-top:11px;padding-bottom:11px}.row.file{cursor:pointer}.row.file:hover,.row.file:focus-visible{background:var(--hover)}.fileicon{width:34px;height:38px;border:1px solid var(--line);border-radius:8px;display:grid;place-items:center;color:var(--muted);background:var(--bg)}.fileicon.folder{color:#c7932c;border-color:transparent;background:#efb3361a}.name{font-size:13px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.kind,.size{color:var(--muted);font-size:12px}.size{text-align:right}.status{font-size:12px;color:var(--muted);margin-top:18px;min-height:20px}.empty{padding:60px 20px;text-align:center;color:var(--muted);font-size:13px}dialog{padding:0;border:1px solid var(--line);border-radius:22px;background:var(--surface);color:var(--ink);width:min(950px,94vw);max-height:92vh;box-shadow:0 25px 100px #0004}dialog::backdrop{background:#0007;backdrop-filter:blur(8px)}.preview-head{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:18px 22px;border-bottom:1px solid var(--line)}.preview-head strong{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.preview-body{min-height:270px;max-height:65vh;overflow:auto;display:grid;place-items:center;padding:20px;background:var(--bg)}.preview-body img,.preview-body video{max-width:100%;max-height:60vh;object-fit:contain}.preview-body pre{white-space:pre-wrap;overflow-wrap:anywhere;justify-self:stretch;align-self:start;font:13px/1.7 ui-monospace,monospace;margin:0}.preview-body audio{width:min(100%,500px)}.preview-foot{padding:15px 22px;font-size:11px;color:var(--muted)}.sr{position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden}#busy{font-size:12px;color:var(--muted)}@media(prefers-color-scheme:dark){:root{--bg:#222524;--surface:#2b2e2c;--soft:#272a28;--ink:#eeeFE9;--muted:#a1a69e;--line:#41463f;--hover:#50462e;--bad:#ffaaa1}.card{box-shadow:none}}@media(max-width:720px){.app{grid-template-columns:1fr}.sidebar{padding:16px 22px;flex-direction:row;border-right:0;border-bottom:1px solid var(--line);align-items:center;justify-content:space-between}.sidebar .detail,.sidebar .nav,.sidebar .bottom{display:none}.brand{font-size:18px}.main{padding:22px 18px}header{margin-bottom:20px}.card{margin:3vh auto 0;padding:25px}.row{grid-template-columns:34px minmax(0,1fr) 65px;padding:13px 12px}.kind{display:none}.row.header .kind{display:none}.search{width:100%}.lock .pill{display:none}.preview-head{padding:14px;flex-wrap:wrap}}@media(prefers-reduced-motion:no-preference){button{transition:background .12s}}
+</style>
+</head>
+<body>
+<svg hidden aria-hidden="true"><defs>
+<symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11H3Z"/></symbol>
+<symbol id="icon-doc" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6Z M14 3v5h4 M9 12h6 M9 16h6"/></symbol>
+<symbol id="icon-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></symbol>
+<symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5 M4 16v5h16v-5"/></symbol>
+</defs></svg>
+<div class="app">
+<aside class="sidebar"><div class="brand"><span class="logo"><svg class="icon"><use href="#icon-folder"/></svg></span>Harbor <span class="sr">Reader</span></div><div class="detail"><div class="eyebrow">Portable vault reader</div><p class="small muted">Your vault.<br>Wherever you need it.</p></div><button class="nav" id="allFiles" disabled><svg class="icon"><use href="#icon-folder"/></svg>All files</button><div class="bottom small muted">Made by Arjun Tyagi<br><a href="https://github.com/arjun1223/HarborVault" target="_blank" rel="noopener noreferrer">GitHub ↗</a><p>Local files. No account.<br>No uploads or tracking.</p></div></aside>
+<main class="main"><header><div><div class="eyebrow">Harbor Reader</div><h1 id="title">A little more portable.</h1></div><div class="lock"><span class="pill" id="publicBadge" hidden>Public copy</span><span class="pill"><span class="dot"></span>On your device</span><button class="btn" id="lockButton" hidden><svg class="icon"><use href="#icon-lock"/></svg>Lock</button></div></header>
+<section class="card" id="unlockPanel"><div class="logo large-logo"><svg class="icon"><use href="#icon-folder"/></svg></div><h2>Open a portable vault</h2><p>Open a public .harb directly, or enter a sharing key for a private export. Everything stays in your browser.</p>
+<div class="drop" id="drop"><div class="small muted">Drop a .harb or .harbkey here</div><button class="btn" id="choose">Choose files…</button><input id="file" type="file" accept=".harb,.harbkey" multiple hidden><div class="file-name" id="fileName">No file selected · Up to 256 MiB</div></div>
+<form id="unlockForm"><div id="privateFields"><label class="field-label" for="key">Sharing key</label><div class="input-wrap"><input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="HARB-…" maxlength="160"><button class="reveal" type="button" data-reveal="key" aria-label="Show sharing key">Show</button></div>
+<div class="actions"><button type="button" class="btn" id="loadKey">Load encrypted key…</button><span class="small muted">.harbkey</span><input id="keyFile" type="file" accept=".harbkey" hidden></div>
+<div id="keyPasswordPanel" hidden><div class="file-name" id="keyFileName"></div><label class="field-label" for="keyPassword">Saved-key password</label><div class="input-wrap"><input id="keyPassword" type="password" autocomplete="off" maxlength="1024"><button type="button" class="reveal" data-reveal="keyPassword" aria-label="Show saved-key password">Show</button></div><button type="button" class="btn wide" id="unlockKey">Unlock saved key</button></div>
+</div><p id="publicNote" class="small muted" hidden>Public copy · Anyone with this file can view and download it. No password is needed.</p><button class="btn primary wide" id="openButton" type="submit">Unlock vault <span aria-hidden="true">→</span></button></form><p class="error" id="error" role="alert" hidden></p><div id="busy" role="status" aria-live="polite"></div><div class="note">Private exports require their sharing key, not your Mac or vault password. Public exports open without a key. Locks when you leave this tab or after 5 minutes idle. Downloads are readable copies outside the vault.</div></section>
+<section id="browser" hidden><div class="toolbar"><nav class="crumbs" id="crumbs" aria-label="Folder path"></nav><label class="search"><svg class="icon"><use href="#icon-search"/></svg><span class="sr">Search filenames</span><input type="search" id="search" placeholder="Search filenames" maxlength="240"></label></div><div class="files"><div class="row header"><span></span><span>Name</span><span class="kind">Kind</span><span class="size">Size</span></div><div id="rows"></div></div><div class="status" id="status" role="status" aria-live="polite"></div><p class="small muted">Click to preview · Folders open on click · Originals stay encrypted and unchanged</p></section>
+</main></div>
+<dialog id="preview"><div class="preview-head"><strong id="previewTitle"></strong><div><button class="btn" id="download"><svg class="icon"><use href="#icon-download"/></svg>Download</button> <button class="btn" id="closePreview" aria-label="Close preview">Close</button></div></div><div class="preview-body" id="previewBody"></div><div class="preview-foot">Verified before viewing. Downloading creates a readable copy. Leaving the tab locks this reader.</div></dialog>
+<script id="harbor-core">
+'use strict';
+// Format-compatible Web Crypto operations. No custom encryption primitives.
+const HarborCore = (() => {
+  const MAX = 256 * 1024 * 1024, BLOCK = 1024 * 1024, CHUNK = 4 * BLOCK;
+  const enc = new TextEncoder(), dec = new TextDecoder('utf-8', {fatal:true});
+  const fail = (message='Invalid or unsupported portable vault.') => { throw new Error(message); };
+  const concat = (...parts) => { const out = new Uint8Array(parts.reduce((n,p)=>n+p.length,0)); let at=0; for(const p of parts){out.set(p,at);at+=p.length;} return out; };
+  const u64 = n => {const out=new Uint8Array(8);new DataView(out.buffer).setBigUint64(0,BigInt(n));return out;};
+  const number = bytes => { if(bytes.length!==8)fail();const n=new DataView(bytes.buffer,bytes.byteOffset,8).getBigUint64(0);if(n>BigInt(Number.MAX_SAFE_INTEGER))fail('An archive length exceeds the browser’s safe limit.');return Number(n); };
+  const uuid = text => {if(typeof text!=='string'||! /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(text))fail();return text.toUpperCase();};
+  const base64 = (text,size) => {if(typeof text!=='string'||text.length>Math.ceil(size/3)*4||! /^[A-Za-z0-9+/]*={0,2}$/.test(text))fail();let raw;try{raw=atob(text);}catch{fail();}if(raw.length!==size)fail();return Uint8Array.from(raw,c=>c.charCodeAt(0));};
+  const same = (a,b) => a.length===b.length && a.every((v,i)=>v===b[i]);
+  async function aes(key,bytes,aad){if(bytes.length<28)fail();try{return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.subarray(0,12),additionalData:aad,tagLength:128},key,bytes.subarray(12)));}catch{fail('The key is incorrect, or this file is damaged or modified.');}}
+  function parseKey(text){if(typeof text!=='string'||enc.encode(text).length>160)fail('Enter the complete HARB sharing key.');let hex=text.trim().toUpperCase().replace(/^HARB-/, '').replace(/-/g,'');if(!/^[0-9A-F]{64}$/.test(hex))fail('Enter the complete HARB sharing key.');return Uint8Array.from(hex.match(/../g),h=>parseInt(h,16));}
+  class Cursor{constructor(bytes){this.bytes=bytes;this.at=0;}take(n){if(!Number.isSafeInteger(n)||n<0||n>this.bytes.length-this.at)fail('The vault is truncated or has invalid lengths.');const value=this.bytes.subarray(this.at,this.at+n);this.at+=n;return value;}length(){return number(this.take(8));}get done(){return this.at===this.bytes.length;}}
+  function validate(catalog){
+    if(![1,2].includes(catalog.version)||typeof catalog.name!=='string'||catalog.name.length<1||catalog.name.length>256)fail();
+    const m=catalog.manifest;if(!m||![1,2].includes(m.version)||!Array.isArray(m.items)||m.items.length>10000)fail('Unsupported or oversized catalog.');
+    const retention=m.trashRetentionDays??30;if(!Number.isInteger(retention)||retention<0||retention>3650)fail();
+    const ids=new Map(),siblings=new Set();let total=0;
+    for(const item of m.items){
+      item.id=uuid(item.id);item.parent=item.parent==null?null:uuid(item.parent);
+      if(ids.has(item.id)||typeof item.name!=='string'||!item.name||['.','..'].includes(item.name)||/[/:\0]/.test(item.name)||enc.encode(item.name).length>240||typeof item.isFolder!=='boolean'||!Number.isSafeInteger(item.size)||item.size<0||item.size>MAX||item.deletedAt!=null||item.trashRootID!=null||item.permanentDeletionDate!=null)fail('Invalid file or folder metadata.');
+      if(!Number.isFinite(item.created)||!Number.isFinite(item.modified))fail();
+      if(item.isFolder){if(item.size!==0)fail();}else{item.expectedDigest=base64(item.digest,32);}
+      total+=item.size;if(!Number.isSafeInteger(total)||total>MAX)fail('This vault is too large for the browser reader.');
+      const sibling=(item.parent??'root')+'/'+item.name.toLowerCase();if(siblings.has(sibling))fail('Duplicate names in a folder.');siblings.add(sibling);ids.set(item.id,item);
+    }
+    for(const item of m.items){const seen=new Set([item.id]);let parent=item.parent;while(parent){const p=ids.get(parent);if(seen.size>=128||seen.has(parent)||!p?.isFolder)fail('Invalid folder hierarchy.');seen.add(parent);parent=p.parent;}}
+    return m.items;
+  }
+  async function open(input,text,alive=()=>{},progress=()=>{}){
+    if(!globalThis.crypto?.subtle)fail('This browser does not provide Web Crypto here. Open this HTML locally in a current Safari, Chrome, Edge, or Firefox.');
+    if(!(input instanceof Uint8Array)||input.length>MAX||input.length<52)fail('Choose a .harb file no larger than 256 MiB.');
+    let raw=input,keyBytes=null,key=null,success=false,isPublic=false;
+    if(dec.decode(input.subarray(0,8))==='HARBPB01'){
+      if(input.length<40+48||dec.decode(input.subarray(40,48))!=='HARBPK02')fail('Invalid public vault format.');
+      isPublic=true;keyBytes=input.slice(8,40);raw=input.subarray(40);
+    }else keyBytes=parseKey(text);
+    try{
+      const marker=dec.decode(raw.subarray(0,8));
+      key=await crypto.subtle.importKey('raw',keyBytes,'AES-GCM',false,['decrypt']);alive();
+      if(marker==='HARBPK02'){
+        const cursor=new Cursor(raw),header=cursor.take(48),salt=header.subarray(8,40),padded=number(header.subarray(40));
+        if(padded<BLOCK||padded>MAX||(BigInt(padded)&(BigInt(padded)-1n))!==0n||raw.length!==48+padded+(padded/BLOCK)*28)fail('Invalid encrypted envelope.');
+        const master=await crypto.subtle.importKey('raw',keyBytes,'HKDF',false,['deriveKey']);alive();
+        let inner=null,remaining=0,at=0;
+        try{
+          for(let index=0;index<padded/BLOCK;index++){
+            alive();progress('Verifying encrypted envelope… '+Math.round(index/(padded/BLOCK)*100)+'%');
+            const recordKey=await crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,info:concat(enc.encode('Harbor portable v2 record'),u64(index))},master,{name:'AES-GCM',length:256},false,['decrypt']);alive();
+            const plain=await aes(recordKey,cursor.take(BLOCK+28),concat(header,u64(index)));
+            try{
+              alive();let start=0;
+              if(index===0){const length=number(plain.subarray(0,8));if(length<80||length>padded-8||(padded!==BLOCK&&length+8<=padded/2))fail('Invalid encrypted archive length.');inner=new Uint8Array(length);remaining=length;start=8;}
+              const count=Math.min(remaining,plain.length-start);inner.set(plain.subarray(start,start+count),at);at+=count;remaining-=count;
+              if(plain.subarray(start+count).some(v=>v!==0))fail('Invalid encrypted padding.');
+            }finally{plain.fill(0);}
+          }
+          if(!cursor.done||remaining!==0)fail();raw.fill(0);raw=inner;inner=null;
+        }finally{inner?.fill(0);}
+      }else if(marker!=='HARBPK01')fail('This file is not a supported .harb export.');
+      alive();progress('Verifying vault catalog…');
+      const cursor=new Cursor(raw);if(dec.decode(cursor.take(8))!=='HARBPK01')fail();const packageID=uuid(dec.decode(cursor.take(36)));
+      const catalogLength=cursor.length();if(catalogLength<28||catalogLength>16*BLOCK)fail('Invalid catalog length.');
+      const decoded=await aes(key,cursor.take(catalogLength),enc.encode('harb/catalog/'+packageID));let catalog;
+      try{alive();catalog=JSON.parse(dec.decode(decoded));}finally{decoded.fill(0);}
+      const items=validate(catalog),records=new Map();
+      for(const item of items.filter(i=>!i.isFolder).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)){
+        const chunks=Math.max(1,Math.ceil(item.size/CHUNK)),expected=24+item.size+chunks*36;
+        if(cursor.length()!==expected)fail('Invalid encrypted file length.');const record=cursor.take(expected),check=new Cursor(record),header=check.take(24);
+        if(dec.decode(header.subarray(0,8))!=='HARBOR01'||number(header.subarray(8,16))!==item.size||number(header.subarray(16))!==chunks)fail('Invalid encrypted file framing.');
+        let remaining=item.size;for(let index=0;index<chunks;index++){const size=Math.min(CHUNK,remaining);if(check.length()!==size+28)fail();check.take(size+28);remaining-=size;}
+        if(!check.done)fail();records.set(item.id,record);
+      }
+      if(!cursor.done)fail('Unexpected data after the vault.');alive();
+      let closed=false;
+      const session={name:catalog.name,items,isPublic,async read(id){
+        if(closed)fail('The reader is locked.');const item=items.find(i=>i.id===id);if(!item||item.isFolder)fail();
+        const cursor=new Cursor(records.get(id)),header=cursor.take(24),chunks=number(header.subarray(16)),out=new Uint8Array(item.size);let at=0,ok=false;
+        try{
+          for(let index=0;index<chunks;index++){
+            alive();if(closed)fail('The reader is locked.');const count=cursor.length();
+            const plain=await aes(key,cursor.take(count),concat(enc.encode(packageID+'/'+item.id),header,u64(index)));
+            try{alive();if(closed||plain.length!==Math.min(CHUNK,item.size-at))fail('The file failed its integrity check.');out.set(plain,at);at+=plain.length;}finally{plain.fill(0);}
+          }
+          const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',out));alive();
+          if(closed||at!==item.size||!cursor.done||!same(digest,item.expectedDigest))fail('The file failed its integrity check.');ok=true;return out;
+        }finally{if(!ok)out.fill(0);}
+      },close(){closed=true;raw.fill(0);input.fill(0);records.clear();items.length=0;key=null;}};
+      success=true;return session;
+    }finally{keyBytes.fill(0);if(!success){raw.fill(0);input.fill(0);key=null;}}
+  }
+  async function unlockSavedKey(bytes,password){
+    if(bytes.length>4096)fail('This saved-key file is too large.');const envelope=JSON.parse(dec.decode(bytes));
+    if(envelope.version!==1||envelope.rounds!==600000||typeof envelope.sealed!=='string'||envelope.sealed.length>2048)fail('Unsupported encrypted key file.');
+    const salt=base64(envelope.salt,32),secret=enc.encode(password);let plain;
+    try{const material=await crypto.subtle.importKey('raw',secret,'PBKDF2',false,['deriveKey']);const key=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt,iterations:600000},material,{name:'AES-GCM',length:256},false,['decrypt']);
+      let sealed;try{sealed=Uint8Array.from(atob(envelope.sealed),c=>c.charCodeAt(0));}catch{fail();}
+      plain=await aes(key,sealed,enc.encode('Harbor protected sharing key v1'));const text=dec.decode(plain),parsed=parseKey(text);parsed.fill(0);return text;
+    }finally{secret.fill(0);plain?.fill(0);}
+  }
+  return {open,unlockSavedKey,MAX};
+})();
+</script>
+<script id="harbor-ui">
+'use strict';
+const $=id=>document.getElementById(id), utf8=new TextDecoder('utf-8',{fatal:true});
+let selectedFile=null,savedKeyFile=null,session=null,parent=null,generation=0,working=false,lastActive=Date.now(),previewURL=null,previewBytes=null,previewItem=null,previewGeneration=0;
+function icon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.classList.add('icon');const use=document.createElementNS(svg.namespaceURI,'use');use.setAttribute('href','#icon-'+name);svg.append(use);return svg;}
+function message(text){$('error').textContent=text;$('error').hidden=!text;}
+function busy(value,text=''){working=value;$('openButton').disabled=value;$('choose').disabled=value;$('loadKey').disabled=value;$('unlockKey').disabled=value;$('busy').textContent=text;}
+function alive(token){if(token!==generation)throw new Error('The reader was locked. Open the vault again.');}
+function closePreview(){previewGeneration++;if($('preview').open)$('preview').close();$('previewBody').replaceChildren();if(previewURL)URL.revokeObjectURL(previewURL);previewURL=null;previewBytes?.fill(0);previewBytes=null;previewItem=null;$('previewTitle').textContent='';}
+function lock(note='Reader locked. Choose the file to open it again.'){
+  generation++;closePreview();session?.close();session=null;parent=null;selectedFile=null;savedKeyFile=null;
+  for(const id of ['key','keyPassword','file','keyFile','search'])$(id).value='';
+  for(const id of ['key','keyPassword'])$(id).type='password';document.querySelectorAll('[data-reveal]').forEach(b=>b.textContent='Show');
+  $('rows').replaceChildren();$('crumbs').replaceChildren();$('title').textContent='A little more portable.';$('fileName').textContent='No file selected · Up to 256 MiB';$('keyPasswordPanel').hidden=true;$('keyFileName').textContent='';$('privateFields').hidden=false;$('publicNote').hidden=true;$('publicBadge').hidden=true;$('openButton').textContent='Unlock vault →';$('browser').hidden=true;$('unlockPanel').hidden=false;$('lockButton').hidden=true;$('allFiles').disabled=true;busy(false,note);message('');
+}
+function pickKey(file){if(working||!file)return;if(!file.name.toLowerCase().endsWith('.harbkey')||file.size>4096){message('Choose an encrypted .harbkey file no larger than 4 KiB.');return;}savedKeyFile=file;$('keyPassword').value='';$('keyFileName').textContent=file.name;$('keyPasswordPanel').hidden=false;message('');$('keyPassword').focus();}
+function pick(files){if(working||session)return;const list=Array.from(files);if(!list.length)return;const vaults=list.filter(f=>f.name.toLowerCase().endsWith('.harb')),keys=list.filter(f=>f.name.toLowerCase().endsWith('.harbkey'));if(vaults.length+keys.length!==list.length||vaults.length>1||keys.length>1){message('Drop one .harb vault, one .harbkey, or one of each together.');return;}const file=vaults[0],keyFile=keys[0];if(file&&file.size>HarborCore.MAX){message('Choose a .harb file no larger than 256 MiB.');return;}if(keyFile&&keyFile.size>4096){message('Choose an encrypted .harbkey file no larger than 4 KiB.');return;}if(file){selectedFile=file;$('fileName').textContent=file.name+' · '+size(file.size);message('');$('privateFields').hidden=false;$('publicNote').hidden=true;$('openButton').textContent='Unlock vault →';$('key').focus();detectPublic(file);}if(keyFile)pickKey(keyFile);}
+async function detectPublic(file){const token=generation;try{const marker=new TextDecoder().decode(await file.slice(0,8).arrayBuffer());if(token!==generation||selectedFile!==file||working||session)return;if(marker==='HARBPB01'){$('privateFields').hidden=true;$('publicNote').hidden=false;$('openButton').textContent='Open public vault →';$('key').value='';$('keyPassword').value='';savedKeyFile=null;await $('unlockForm').onsubmit({preventDefault(){}});}}catch(e){if(token===generation)message(e.message);}}
+function size(n){return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';}
+function kind(item){return item.isFolder?'Folder':item.name.includes('.')?item.name.split('.').pop().toUpperCase():'File';}
+function path(item){const parts=[item.name];let p=item.parent;while(p){const found=session.items.find(i=>i.id===p);parts.unshift(found.name);p=found.parent;}return parts.join(' / ');}
+function render(){
+  if(!session)return;$('rows').replaceChildren();$('crumbs').replaceChildren();
+  const makeCrumb=(label,id)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>{parent=id;$('search').value='';render();};$('crumbs').append(b);};makeCrumb('All files',null);
+  let chain=[],p=parent;while(p){const item=session.items.find(i=>i.id===p);chain.unshift(item);p=item.parent;}for(const item of chain){const s=document.createElement('span');s.textContent='›';$('crumbs').append(s);makeCrumb(item.name,item.id);}
+  const query=$('search').value.trim().toLowerCase();const items=session.items.filter(i=>query?i.name.toLowerCase().includes(query):i.parent===parent).sort((a,b)=>Number(b.isFolder)-Number(a.isFolder)||a.name.localeCompare(b.name));
+  if(!items.length){const e=document.createElement('div');e.className='empty';e.textContent=query?'No matching files.':'This folder is empty.';$('rows').append(e);}
+  for(const item of items){const row=document.createElement('button');row.className='row file';const tile=document.createElement('span');tile.className='fileicon'+(item.isFolder?' folder':'');tile.append(icon(item.isFolder?'folder':'doc'));const name=document.createElement('span');name.className='name';name.textContent=item.name;name.title=query?path(item):item.name;const type=document.createElement('span');type.className='kind';type.textContent=kind(item);const bytes=document.createElement('span');bytes.className='size';bytes.textContent=item.isFolder?'—':size(item.size);row.append(tile,name,type,bytes);row.onclick=()=>{if(item.isFolder){parent=item.id;$('search').value='';render();}else show(item);};$('rows').append(row);}
+  $('status').textContent=items.length+' item'+(items.length===1?'':'s')+' · Read only';
+}
+function mime(bytes){
+  const starts=arr=>arr.every((v,i)=>bytes[i]===v);
+  if(starts([137,80,78,71,13,10,26,10]))return 'image/png';if(starts([255,216,255]))return 'image/jpeg';if(starts([71,73,70,56]))return 'image/gif';if(starts([82,73,70,70])&&String.fromCharCode(...bytes.subarray(8,12))==='WEBP')return 'image/webp';
+  if(starts([37,80,68,70,45]))return 'application/pdf';
+  if(String.fromCharCode(...bytes.subarray(4,8))==='ftyp'){const brand=String.fromCharCode(...bytes.subarray(8,12));if(['heic','heix','hevc','hevx','mif1','msf1'].includes(brand))return 'image/heic';if(['avif','avis'].includes(brand))return 'image/avif';if(brand==='qt  ')return 'video/quicktime';return 'video/mp4';}
+  if(starts([73,68,51])||(bytes[0]===255&&(bytes[1]&224)===224))return 'audio/mpeg';if(starts([82,73,70,70])&&String.fromCharCode(...bytes.subarray(8,12))==='WAVE')return 'audio/wav';
+  return 'application/octet-stream';
+}
+async function show(item){
+  closePreview();const token=generation,viewToken=previewGeneration;const current=session;$('status').textContent='Decrypting and verifying '+item.name+'…';
+  try{const bytes=await current.read(item.id);if(token!==generation||viewToken!==previewGeneration||current!==session){bytes.fill(0);return;}previewBytes=bytes;previewItem=item;$('previewTitle').textContent=item.name;const type=mime(bytes);
+    if(type.startsWith('image/')){previewURL=URL.createObjectURL(new Blob([bytes],{type}));const img=document.createElement('img');img.alt=item.name;img.src=previewURL;img.onerror=()=>{$('previewBody').textContent='This browser cannot preview this image format. You can download the verified file.';};$('previewBody').append(img);}
+    else if(type.startsWith('video/')||type.startsWith('audio/')){previewURL=URL.createObjectURL(new Blob([bytes],{type}));const media=document.createElement(type.startsWith('video/')?'video':'audio');media.controls=true;media.preload='metadata';media.src=previewURL;media.onerror=()=>{$('previewBody').textContent='This browser cannot play this format. You can download the verified file.';};$('previewBody').append(media);}
+    else if(type!=='application/pdf'&&bytes.length<=2*1024*1024){let text;try{if(bytes.subarray(0,8192).includes(0))throw 0;text=utf8.decode(bytes);}catch{}if(text!=null){const pre=document.createElement('pre');pre.textContent=text;$('previewBody').append(pre);}else $('previewBody').textContent='Preview unavailable. Download the verified file to open it.';}
+    else $('previewBody').textContent=type==='application/pdf'?'PDF verified. Download to open it in your PDF viewer.':'Preview unavailable. Download the verified file to open it.';
+    $('preview').showModal();$('status').textContent='File verified · '+size(item.size);
+  }catch(error){if(token===generation&&viewToken===previewGeneration)$('status').textContent=error.message;}
+}
+$('choose').onclick=()=>$('file').click();$('file').onchange=e=>pick(e.target.files);$('loadKey').onclick=()=>$('keyFile').click();
+$('keyFile').onchange=e=>pickKey(e.target.files[0]);
+$('unlockKey').onclick=async()=>{const token=generation;if(!savedKeyFile||working)return;busy(true,'Unlocking saved key…');message('');let bytes;try{bytes=new Uint8Array(await savedKeyFile.arrayBuffer());alive(token);const text=await HarborCore.unlockSavedKey(bytes,$('keyPassword').value);alive(token);$('key').value=text;$('keyPassword').value='';$('keyPasswordPanel').hidden=true;$('keyFileName').textContent='';savedKeyFile=null;}catch(e){if(token===generation)message(e.message);}finally{bytes?.fill(0);if(token===generation)busy(false);}};
+$('unlockForm').onsubmit=async e=>{e.preventDefault();if(working)return;if(!selectedFile){message('Choose a .harb file first.');return;}const token=++generation;let bytes,opened;busy(true,'Reading encrypted file…');message('');try{bytes=new Uint8Array(await selectedFile.arrayBuffer());alive(token);opened=await HarborCore.open(bytes,$('key').value,()=>alive(token),text=>{if(token===generation)$('busy').textContent=text;});alive(token);session=opened;$('key').value='';$('keyPassword').value='';$('file').value='';$('keyFile').value='';selectedFile=null;savedKeyFile=null;$('title').textContent=session.name;$('publicBadge').hidden=!session.isPublic;$('unlockPanel').hidden=true;$('browser').hidden=false;$('lockButton').hidden=false;$('allFiles').disabled=false;parent=null;lastActive=Date.now();render();}catch(error){opened?.close();bytes?.fill(0);if(token===generation){session=null;parent=null;$('rows').replaceChildren();$('crumbs').replaceChildren();$('browser').hidden=true;$('unlockPanel').hidden=false;$('lockButton').hidden=true;$('allFiles').disabled=true;$('title').textContent='A little more portable.';message(error.message);}}finally{if(token===generation)busy(false);}};
+for(const b of document.querySelectorAll('[data-reveal]'))b.onclick=()=>{const input=$(b.dataset.reveal),show=input.type==='password';input.type=show?'text':'password';b.textContent=show?'Hide':'Show';b.setAttribute('aria-label',(show?'Hide':'Show')+' secret');};
+$('lockButton').onclick=()=>lock();$('allFiles').onclick=()=>{parent=null;$('search').value='';render();};$('search').oninput=render;$('closePreview').onclick=closePreview;$('preview').addEventListener('cancel',e=>{e.preventDefault();closePreview();});
+$('download').onclick=()=>{if(!previewBytes||!previewItem)return;const url=URL.createObjectURL(new Blob([previewBytes],{type:mime(previewBytes)}));const a=document.createElement('a');a.href=url;a.download=previewItem.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+for(const event of ['dragenter','dragover'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('over');});$('drop').addEventListener('dragleave',()=>$('drop').classList.remove('over'));$('drop').addEventListener('drop',e=>{e.preventDefault();e.stopPropagation();$('drop').classList.remove('over');pick(e.dataTransfer.files);});
+window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>{e.preventDefault();pick(e.dataTransfer.files);});
+for(const event of ['pointerdown','keydown','wheel'])document.addEventListener(event,()=>lastActive=Date.now(),{passive:true});
+setInterval(()=>{if((session||working)&&Date.now()-lastActive>5*60*1000)lock('Locked after 5 minutes idle.');},1000);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)lock('Locked when you left the tab.');});window.addEventListener('pagehide',()=>lock());
+if(!globalThis.crypto?.subtle){message('Web Crypto is unavailable. Open this file in a current desktop browser.');$('openButton').disabled=true;}
+</script>
+</body></html>

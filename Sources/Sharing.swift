@@ -8,11 +8,19 @@ final class VaultShareFiles: @unchecked Sendable {
     static var base: URL { FileManager.default.temporaryDirectory.appendingPathComponent("HarborVaultSharing.noindex", isDirectory: true) }
     init(folder: URL, urls: [URL]) { self.folder = folder; self.urls = urls }
     deinit { try? FileManager.default.removeItem(at: folder) }
-    func remove() { try? FileManager.default.removeItem(at: folder) }
+    @discardableResult func remove() -> String? {
+        guard FileManager.default.fileExists(atPath: folder.path) else { return nil }
+        do { try FileManager.default.removeItem(at: folder); return nil }
+        catch { return "Temporary readable share copies could not be removed. Reopen Harbor to retry cleanup." }
+    }
     static func prepare(_ requested: [VaultItem], storage: VaultStorage, manifest: VaultManifest, vaultID: UUID, key: SymmetricKey, temporaryBase: URL = base) throws -> VaultShareFiles {
         try VaultStorage.directory(temporaryBase)
         let folder = temporaryBase.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try VaultStorage.directory(folder)
+        var privateFolder = folder
+        var attributes = URLResourceValues()
+        attributes.isExcludedFromBackup = true
+        try privateFolder.setResourceValues(attributes)
         var completed = false
         defer { if !completed { try? FileManager.default.removeItem(at: folder) } }
         var urls: [URL] = []
@@ -27,10 +35,14 @@ final class VaultShareFiles: @unchecked Sendable {
         completed = true
         return VaultShareFiles(folder: folder, urls: urls)
     }
-    static func removeStaleCopies() {
+    @discardableResult static func removeStaleCopies() -> String? {
         // Called only by the real app at startup, never by fixture tests.
-        guard let children = try? FileManager.default.contentsOfDirectory(at: base, includingPropertiesForKeys: nil) else { return }
-        for child in children where UUID(uuidString: child.lastPathComponent) != nil { try? FileManager.default.removeItem(at: child) }
+        guard let children = try? FileManager.default.contentsOfDirectory(at: base, includingPropertiesForKeys: nil) else { return nil }
+        var failed = false
+        for child in children where UUID(uuidString: child.lastPathComponent) != nil {
+            do { try FileManager.default.removeItem(at: child) } catch { failed = true }
+        }
+        return failed ? "Some readable share copies from an earlier session could not be cleaned up." : nil
     }
 }
 
@@ -62,9 +74,10 @@ final class VaultShareFiles: @unchecked Sendable {
     func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: Error) { finish("Sharing did not complete: " + error.localizedDescription) }
     private func finish(_ message: String) {
         guard files != nil else { return }
-        files?.remove(); files = nil
+        let cleanupWarning = files?.remove()
+        files = nil
         picker?.delegate = nil; picker = nil; service?.delegate = nil; service = nil
-        let callback = completion; completion = nil; callback?(message)
+        let callback = completion; completion = nil; callback?(cleanupWarning ?? message)
     }
 }
 

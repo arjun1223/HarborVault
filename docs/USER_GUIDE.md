@@ -76,6 +76,34 @@ Choose **Delete vault…** from the vault’s sidebar context menu or the Vault 
 
 Then type **`DELETE <vault name>`**, including the exact current name and capitalization. The Delete button remains disabled until both verification and the phrase are valid. Confirmation permanently removes that vault and its encrypted files. Other vaults and outside originals are preserved. There is no undo, and deletion does not erase exports, shared copies, backups, or filesystem snapshots.
 
+## Portable vaults (.harb)
+
+### Public copies
+
+Choose **Vault → Export public vault…** to create a copy anyone can open without a sharing key or password. Confirm the public-copy notice and choose where to save it. The export includes active files and folders, excludes Recently Deleted, and leaves your local vault private. Exporting does not upload or publish anything online.
+
+The HTML reader opens a public file automatically when you choose or drop it, labels it **Public copy**, and allows viewing and downloads. In the Mac app, importing a public file requires no sharing key; choose a new local vault password to protect your imported copy on that Mac. Protecting an imported copy does not make the public export private.
+
+Public copies use the distinct `HARBPB01` marker followed by a deliberately included 32-byte decoding key and a standard `HARBPK02` archive. This offers **no confidentiality**: anyone holding the file can decode its contents, modify it, and create another valid copy. Integrity checks still catch damage, but do not prove the sender's identity or authenticity. Public copies can be kept, downloaded, or forwarded and cannot be recalled. Private exports remain the default and continue to require their separate key.
+
+### Private copies
+
+Unlock a vault, then choose **Vault → Export portable vault…** or use the vault’s sidebar context menu. Save the .harb file and save its separate HARB sharing key before closing the completion sheet. Export includes active files, folders, and empty folders. Recently Deleted is excluded. The source vault is kept.
+
+Send the .harb file and its sharing key separately. Anyone holding both can open that exported copy, and access to downloaded copies cannot be revoked.
+
+**Copy key** marks the clipboard entry as concealed and transient, and clears it after 60 seconds or when the vault locks, provided you have not copied something else. Clipboard managers may ignore those hints. **Save protected key…** saves a password-encrypted `.harbkey` file instead of a readable key; keep its password separate. Use a long, unique password because someone holding this key file can try password guesses offline.
+
+Double-click a .harb file, or choose **File → Open portable vault…**. Enter its sharing key, choose a new local password of at least 10 characters, and optionally enable Touch ID / Mac password on this Mac. You can give the imported vault a different name. Import creates an independent vault with a new identity and encryption key. Later changes are local to each copy.
+
+Portable vaults work offline. Catalogs and filenames are encrypted, and files are re-encrypted under a fresh sharing key for each export. Import verifies each file before registering the new vault. Up to 10,000 items and a 16 MB encrypted catalog are supported. A lost sharing key cannot be recovered from the .harb file. If you still have the source vault, export a new copy.
+
+Version 1.5.1 exports `HARBPK02`: an additional authenticated envelope hides individual file boundaries, exact sizes, and item counts. Its encrypted payload is padded to at least 1 MiB and then to a power of two; this can make exports substantially larger. The format marker and coarse padded total size remain visible. Each 1 MiB record uses a separate HKDF-derived key and authenticates its position and the envelope header. A new random sharing key and salt are generated for every export.
+
+Older `HARBPK01` exports still import, but retain their original observable boundaries and sizes. Export them again to obtain the new protections. This cannot change copies already distributed.
+
+Import warns about an already imported package or an export no newer than one known on this Mac. **Import another or older copy** explicitly allows that choice. These checks use authenticated export metadata and local Keychain history; they do not prove who sent the file, establish the newest copy worldwide, or survive every loss/restoration of that history. A sharing-key holder can create another valid archive.
+
 ## Share with AirDrop, Messages, and other Mac services
 
 Select files and choose the Share button or **Share… (verify identity)** in their context menu. The preview window also has a Share button: it shares the explicitly selected group for a grouped preview, or just the current file for a single-file preview.
@@ -102,7 +130,9 @@ While the app is closed, back up this entire folder to a trusted location. A vau
 
 To restore onto a new Mac, quit Harbor Vault, restore the complete storage folder to the same location, and reopen the app. Unlock with the vault passcode, then disable and re-enable Mac unlock to bind it to the new Mac.
 
-Changing a passcode or removing Mac unlock changes the current header. Older backups can still contain earlier unlock options and passcodes; keep them protected too.
+Changing a passcode now generates a fresh vault key and re-encrypts every stored file, including Recently Deleted, before atomically switching to the new vault. Keep enough free space for a second encrypted copy. This also upgrades older vault settings to authenticated version 2. Existing vaults should change their passcode once to receive that upgrade. Removing Mac unlock changes the current header only. Older backups and exported copies remain accessible with their earlier credentials; keep them protected too.
+
+On this Mac, Keychain checkpoints detect replacement of verified vault metadata with an older or externally changed copy. Do not overwrite current storage with an older backup and expect it to open automatically. Use a separate Mac or isolated recovery environment to inspect a trusted backup. First use on another Mac cannot establish whether that backup is the latest version. An interrupted commit can temporarily admit either its old or new checkpoint until the next successful verification.
 
 ## Storage and implementation
 
@@ -110,17 +140,23 @@ Changing a passcode or removing Mac unlock changes the current header. Older bac
 - Instrument Sans interface text and Manrope headings are bundled locally, along with their SIL Open Font License files. Font sources: [Instrument Sans](https://github.com/google/fonts/tree/main/ofl/instrumentsans) and [Manrope](https://github.com/google/fonts/tree/main/ofl/manrope). No font download is needed at runtime.
 - AES-256-GCM via CryptoKit for the catalog and file contents. Files use independently authenticated 4 MB chunks with authenticated file/vault identity, chunk position, total length, and chunk count.
 - A random 256-bit key per vault. Passcode wrapping uses PBKDF2-HMAC-SHA256 with a random 32-byte salt and 600,000 iterations.
+- Version 2 settings are authenticated with a separate HKDF-derived HMAC key; version-specific wrapping contexts prevent changing the format version to bypass that authentication. Vault labels remain readable while locked.
 - Mac unlock uses a Secure Enclave P-256 key with `.privateKeyUsage` and `.userPresence` access control. An ephemeral ECDH key and HKDF-SHA256 derive a wrapping key. The hardware-bound private-key representation is opaque, not an exported private key. There is no plaintext vault key stored in preferences or on disk.
 - File data and the encrypted catalog are staged and verified before the catalog is atomically committed. File operations run off the UI thread. Late operation results are discarded after locking.
 - Preview data is supplied from memory to native image, PDF, text, and video views. For video, the app decrypts and authenticates only the chunks the player requests. Exports write a readable copy to your selected destination.
 - Sharing intentionally creates temporary plaintext copies after fresh authentication, as described above. Its separate authentication permit is bound to the vault and settings, expires after 60 seconds, and is cleared on cancellation, locking, or session changes.
 - Storage directories use owner-only permissions. A process lock prevents two instances from concurrently editing the same store.
+- Catalog and header reads have size limits. Manifest validation limits item counts and folder depth, rejects nonzero folder sizes, and checks aggregate sizes for overflow. Regular-file reads reject final-component symbolic links. These checks do not make a compromised Mac trustworthy.
+
+Temporary share and screenshot-import copies are excluded from ordinary backups where macOS supports it. Cleanup failures are reported. Removing a temporary file does not guarantee erasure from filesystem snapshots, existing backups, another app, or storage hardware.
 
 This is a first local build, not an independently audited security product. It is designed to protect files at rest when a vault is locked. It does not protect against malware, a compromised/admin-controlled Mac, screen capture, a person viewing an unlocked vault, or privileged memory inspection. Swift/OS memory copies and swap are not guaranteed to be securely erased. Native document frameworks and macOS control their own internal caching. Test with disposable copies and maintain a separate backup before entrusting it with irreplaceable files.
 
 ## Build and verify
 
-This build is signed locally with an ad-hoc signature. It is not notarized or signed with a paid Developer ID. No system security settings need to be disabled.
+Local builds now use an available Apple Development signing identity to preserve the app's Keychain identity across updates. Without one, the build falls back to ad-hoc signing and reports that future updates may need Keychain permissions again. Set `HARBOR_SIGNING_IDENTITY` to choose a specific certificate, or `-` for an explicitly ad-hoc build. None of this provides Developer ID distribution signing or Apple notarization. No system security settings need to be disabled.
+
+When switching an existing ad-hoc installation to certificate-backed signing, older Keychain history records can require one final **Always Allow** permission per record. Touch ID unlocks the vault; these legacy Keychain access permissions are separate. Do not delete the history records to suppress the prompts, because that discards rollback history. Later builds using the same trusted signing identity should retain access.
 
 ```sh
 bash build.sh
@@ -136,6 +172,8 @@ output/storage-tests --hardware
 ```
 
 That test creates a temporary hardware key and checks that unwrapping is rejected when authentication UI is forbidden. It does not authenticate as you or save a vault.
+
+With a development signing identity available, run `bash Tests/SigningHistoryTests.sh` to check access across two differently built, consistently signed test programs. It uses randomly named disposable history records, forbids authentication UI for cross-build reads, checks rollback rejection, and removes its test records afterward. It does not inspect your existing history or vaults.
 
 Tests use only generated fixtures. They cover independent vault passcodes, wrong-password rejection, encrypted catalogs, empty/multi-chunk files, ciphertext corruption and identity binding, export recovery, folder preservation, source-change detection, symbolic-link rejection, passcode changes, deletion boundaries, locking and cancellation, selection/range/marquee rules, folder history, thumbnail generation, preview keyboard policy, fresh deletion authorization and exact phrases, and temporary sharing-copy cleanup. The latest native gestures, focus transitions, and sharing-service handoff still require an explicitly approved interactive check; tests do not claim that a message or AirDrop was sent.
 

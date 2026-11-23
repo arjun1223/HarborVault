@@ -131,6 +131,10 @@ final class FileDropStaging: @unchecked Sendable {
         promises = folder.appendingPathComponent("promises", isDirectory: true)
         do { try VaultStorage.directory(folder); try VaultStorage.directory(promises) }
         catch { try? FileManager.default.removeItem(at: folder); throw error }
+        var privateFolder = folder
+        var attributes = URLResourceValues()
+        attributes.isExcludedFromBackup = true
+        try privateFolder.setResourceValues(attributes)
     }
     deinit { remove() }
     var urls: [URL] { lock.lock(); defer { lock.unlock() }; return values }
@@ -182,13 +186,22 @@ final class FileDropStaging: @unchecked Sendable {
             for child in try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) { try protect(child) }
         }
     }
-    func remove() {
+    @discardableResult func remove() -> String? {
         lock.lock(); defer { lock.unlock() }
         closed = true
-        try? FileManager.default.removeItem(at: folder)
+        var warning: String?
+        if FileManager.default.fileExists(atPath: folder.path) {
+            do { try FileManager.default.removeItem(at: folder) }
+            catch { warning = "Temporary readable import copies could not be removed. Reopen Harbor to retry cleanup." }
+        }
         values = []; originals = []
+        return warning
     }
-    static func removeStaleCopies() { try? FileManager.default.removeItem(at: base) }
+    @discardableResult static func removeStaleCopies() -> String? {
+        guard FileManager.default.fileExists(atPath: base.path) else { return nil }
+        do { try FileManager.default.removeItem(at: base); return nil }
+        catch { return "Readable import copies from an earlier session could not be cleaned up." }
+    }
 }
 
 struct NativeDropRegion<Content: View>: NSViewRepresentable {

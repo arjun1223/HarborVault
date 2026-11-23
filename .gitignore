@@ -12,9 +12,15 @@
 !/Tests/*.swift
 !/Tests/*.h
 !/Tests/*.m
+!/Tests/*.mjs
+!/Tests/*.sh
+!/Web/
+!/Web/*.html
+!/Web/README.md
 !/Tools/
 !/Tools/MakeIcon.swift
 !/Tools/PublishApp.py
+!/Tools/SigningIdentity.sh
 !/Resources/
 !/Resources/Fonts/
 !/Resources/Fonts/InstrumentSans.ttf

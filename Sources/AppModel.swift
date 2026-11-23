@@ -72,6 +72,8 @@ import UniformTypeIdentifiers
     private var previewJob: Task<PreviewContent, Error>?
     private var previewToken = UUID()
     @Published var showCreate = false
+    @Published var portableImport: PortableImportRequest?
+    @Published var portableExport: PortableExportReceipt?
     @Published var showPasscodeSettings = false
     @Published var showSettings = false
     @Published var protectedAction: VaultActionRequest?
@@ -113,7 +115,10 @@ import UniformTypeIdentifiers
     init(root: URL? = nil) {
         do {
             storage = try VaultStorage(root: root ?? VaultStorage.defaultRoot)
-            if root == nil { VaultShareFiles.removeStaleCopies(); FileDropStaging.removeStaleCopies() }
+            if root == nil {
+                let warnings = [VaultShareFiles.removeStaleCopies(), FileDropStaging.removeStaleCopies()].compactMap { $0 }
+                if !warnings.isEmpty { notice = warnings.joined(separator: " ") }
+            }
         }
         catch { storage = nil; self.error = error.localizedDescription }
         reload()
@@ -139,9 +144,18 @@ import UniformTypeIdentifiers
             .sorted(by: (viewingRecentlyDeleted ? trashSort : fileSort).precedes)
     }
     var fileCount: Int { manifest.items.filter { !$0.isFolder && !$0.isDeleted }.count }
-    var totalBytes: Int64 { manifest.items.filter { !$0.isDeleted }.reduce(0) { $0 + $1.size } }
+    var totalBytes: Int64 { safeTotal(manifest.items.filter { !$0.isDeleted }) }
     var trashCount: Int { manifest.recentlyDeleted.count }
-    var trashBytes: Int64 { manifest.items.filter(\.isDeleted).reduce(0) { $0 + $1.size } }
+    var trashBytes: Int64 { safeTotal(manifest.items.filter(\.isDeleted)) }
+    private func safeTotal(_ items: [VaultItem]) -> Int64 {
+        var total: Int64 = 0
+        for item in items where !item.isFolder {
+            let (sum, overflow) = total.addingReportingOverflow(max(0, item.size))
+            if overflow { return Int64.max }
+            total = sum
+        }
+        return total
+    }
     func childrenInPreview(of item: VaultItem) -> [VaultItem] {
         manifest.items.filter { $0.parent == item.id && $0.isDeleted == item.isDeleted && (!item.isDeleted || $0.trashRootID == item.trashRootID) }
     }
@@ -157,7 +171,7 @@ import UniformTypeIdentifiers
     }
     var canStartAutomaticMacUnlock: Bool {
         automaticMacUnlockRequested && !unlocked && !busy && !showCreate && !showSettings &&
-            protectedAction == nil && inlineTouchIDContext == nil && header?.macUnlock != nil
+            protectedAction == nil && portableImport == nil && portableExport == nil && inlineTouchIDContext == nil && header?.macUnlock != nil
     }
     func beginAutomaticMacUnlock() {
         guard canStartAutomaticMacUnlock else { return }
@@ -231,6 +245,7 @@ import UniformTypeIdentifiers
         if !unlocked, inlineTouchIDContext == nil { automaticMacUnlockRequested = header?.macUnlock != nil }
     }
     func lock() {
+        SecretClipboard.clearIfOwned()
         internalDragIDs = []
         touchIDPaused = false
         automaticMacUnlockRequested = false
@@ -253,12 +268,13 @@ import UniformTypeIdentifiers
         protectedAction = nil; actionAuthenticatedAt = nil; actionPermit = nil; actionKey = nil
         shareSession?.cancelIfNotStarted()
         preview = nil; importResult = nil; showPasscodeSettings = false
+        portableExport = nil; portableImport = nil
         notice = nil; error = nil
     }
     func checkIdle(now: Date = Date()) {
         if NSApplication.shared.isActive, !touchIDPaused, !unlocked, !busy, inlineTouchIDContext == nil,
            header?.macUnlock != nil, protectedAction == nil, shareSession == nil,
-           !showCreate, !showSettings, error == nil {
+           !showCreate, !showSettings, portableImport == nil, portableExport == nil, error == nil {
             prepareInlineTouchID()
         }
         if let permit = transferPermit, !permit.isFresh(for: permit.vaultID, now: now) {
@@ -276,6 +292,65 @@ import UniformTypeIdentifiers
         if now.timeIntervalSince(lastTrashPurge) >= 60 { purgeExpiredTrashIfNeeded(now: now) }
     }
     func setIdle(_ minutes: Int) { idleMinutes = minutes; UserDefaults.standard.set(minutes, forKey: "idleMinutes") }
+
+    func exportPortable(publiclyReadable: Bool = false) {
+        guard unlocked, !busy, let storage, let header, let key else { return }
+        let token = generation
+        if publiclyReadable {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Export a public copy?"
+            alert.informativeText = "Anyone with this file can view and download its active files and folders without a password. Copies can be forwarded and cannot be recalled. Your local vault stays private."
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Export public copy")
+            guard alert.runModal() == .alertSecondButtonReturn, unlocked, generation == token else { return }
+        }
+        let panel = NSSavePanel()
+        panel.title = publiclyReadable ? "Export public vault" : "Export portable vault"
+        panel.allowedContentTypes = [UTType(filenameExtension: "harb") ?? .data]
+        panel.nameFieldStringValue = publiclyReadable ? "Public Vault.harb" : "Vault.harb"
+        panel.message = publiclyReadable ? "Anyone with this public file can open it. No sharing key or password is required." : "Export active files and folders with a separate sharing key."
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                guard self.unlocked, self.generation == token else { return }
+                self.run(publiclyReadable ? "Exporting public vault copy…" : "Exporting encrypted portable vault…", operation: {
+                    try PortableVault.export(storage: storage, header: header, key: key, to: url, publiclyReadable: publiclyReadable)
+                }) { self.portableExport = $0 }
+            }
+        }
+    }
+
+    func choosePortableFile() {
+        guard !busy else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "harb") ?? .data]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in self.openPortable(url) }
+        }
+    }
+    func openPortable(_ url: URL) {
+        guard !busy else { error = "Wait for the current operation to finish, then open the .harb file again."; return }
+        guard url.pathExtension.lowercased() == "harb" else { return }
+        lock()
+        showCreate = false
+        showSettings = false
+        portableImport = PortableImportRequest(url: url)
+    }
+    func importPortable(_ request: PortableImportRequest, sharingKey: String, name: String, passcode: String, mac: Bool, allowPreviouslyImported: Bool = false) {
+        guard !busy, let storage, portableImport?.id == request.id else { return }
+        run("Importing and verifying portable vault…", operation: {
+            try PortableVault.importVault(from: request.url, sharingKey: sharingKey, name: name, passcode: passcode, mac: mac, into: storage, allowPreviouslyImported: allowPreviouslyImported)
+        }) { header, key, manifest in
+            self.portableImport = nil
+            self.reload(); self.selectedVaultID = header.id
+            self.key = key; self.manifest = manifest; self.unlocked = true
+            self.notice = "Imported your own copy of the portable vault."
+        }
+    }
 
     // All filesystem and cryptographic work runs off the UI thread. Cancel on lock,
     // and discard late results so they can never repopulate a locked window.
@@ -311,7 +386,10 @@ import UniformTypeIdentifiers
         run("Unlocking vault…", operation: {
             let key = try storage.passcodeKey(passcode, header: header)
             return (key, try storage.loadManifest(vaultID: header.id, key: key))
-        }) { key, manifest in self.key = key; self.manifest = manifest; self.unlocked = true; self.purgeExpiredTrashIfNeeded() }
+        }) { key, manifest in
+            self.key = key; self.manifest = manifest; self.unlocked = true; self.purgeExpiredTrashIfNeeded()
+            if header.version == 1 { self.notice = "This vault uses legacy settings protection. Change its password to rotate the key and upgrade it." }
+        }
     }
     func unlockMac() {
         touchIDPaused = true
@@ -348,12 +426,16 @@ import UniformTypeIdentifiers
             context.invalidate(); self.authContext = nil
             self.key = key; self.manifest = manifest; self.unlocked = true
             self.purgeExpiredTrashIfNeeded()
+            if header.version == 1 { self.notice = "This vault uses legacy settings protection. Change its password to rotate the key and upgrade it." }
         }
     }
     func changePasscode(_ passcode: String) {
         guard let storage, let header, let key else { return }
-        run("Updating vault passcode…", operation: { try storage.changePasscode(passcode, header: header, key: key) }) { _ in
-            self.reload(); self.showPasscodeSettings = false; self.notice = "Vault passcode updated."
+        closeQuickView(); closeSmallPreview(); thumbnails.clear()
+        run("Rotating the vault key and password…", operation: { try storage.changePasscode(passcode, header: header, key: key) }) { result in
+            self.key = result.key
+            self.reload(); self.showPasscodeSettings = false
+            self.notice = result.warning ?? "Vault password updated and current files re-encrypted with a new key. Older backups and portable exports retain their own access."
         }
     }
     func toggleMacUnlock() {
@@ -362,7 +444,7 @@ import UniformTypeIdentifiers
         run(enable ? "Enabling Mac unlock…" : "Disabling Mac unlock…", operation: {
             var updated = header
             updated.macUnlock = enable ? try VaultCrypto.makeMacUnlock(key: key, vaultID: header.id) : nil
-            try storage.saveHeader(updated)
+            try storage.saveHeader(updated, key: key)
         }) { _ in self.reload(); self.notice = enable ? "Touch ID / Mac password enabled for this vault." : "This vault now requires its own passcode." }
     }
     private var location: BrowserLocation { BrowserLocation(folderID: folderID, query: query, selected: selectionIDs, lead: selection) }
@@ -602,9 +684,10 @@ import UniformTypeIdentifiers
             try Task.checkCancellation()
             let originals = staging.originalURLs
             let result = try storage.importSources(staging.urls, parent: parent, manifest: snapshot, vaultID: header.id, key: key)
-            return ImportResult(manifest: result.manifest, receipts: result.receipts.filter { originals.contains($0.source.standardizedFileURL) }, importedFiles: result.importedFiles)
-        }) { result in
+            return (ImportResult(manifest: result.manifest, receipts: result.receipts.filter { originals.contains($0.source.standardizedFileURL) }, importedFiles: result.importedFiles), staging.remove())
+        }) { result, cleanupWarning in
             self.manifest = result.manifest; self.importResult = result
+            if let cleanupWarning { self.notice = cleanupWarning }
         }
     }
     func trashOriginals(_ result: ImportResult) {
@@ -760,7 +843,7 @@ import UniformTypeIdentifiers
         protectedAction = VaultActionRequest(kind: .delete, header: header)
     }
     func renameVault(_ header: VaultHeader) {
-        guard unlocked, selectedVaultID == header.id, !busy, let storage else { return }
+        guard unlocked, selectedVaultID == header.id, !busy, let storage, let key else { return }
         prompt(title: "Rename vault", message: "Choose a neutral label. Vault names are visible while locked.", value: header.name) { name in
             guard !name.isEmpty, name.count <= 64, !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
                 self.error = "Use a vault name of 1–64 characters without control characters."; return
@@ -768,7 +851,7 @@ import UniformTypeIdentifiers
             self.run("Renaming vault…", operation: {
                 var updated = try storage.loadHeader(header.id)
                 updated.name = name
-                try storage.saveHeader(updated)
+                try storage.saveHeader(updated, key: key)
             }) { _ in self.reload(); self.notice = "Vault renamed." }
         }
     }
@@ -812,6 +895,7 @@ import UniformTypeIdentifiers
                 guard let passcode, !passcode.isEmpty else { throw VaultError.message("Enter this vault’s passcode.") }
                 key = try storage.passcodeKey(passcode, header: fresh)
             }
+            try storage.verifyHeader(fresh, key: key)
             let permit = VaultActionPermit(vaultID: fresh.id, headerFingerprint: try VaultStorage.headerFingerprint(fresh), authenticatedAt: Date())
             return (permit, key)
         }) { permit, key in

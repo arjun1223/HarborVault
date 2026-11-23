@@ -20,8 +20,14 @@ enum VaultCrypto {
     }
     static func derive(_ password: String, salt: Data, rounds: Int = rounds) throws -> SymmetricKey {
         guard salt.count == 32, (600_000...2_000_000).contains(rounds) else { throw VaultError.message("Invalid passcode parameters.") }
-        let passwordBytes = Array(password.utf8)
+        var passwordBytes = Array(password.utf8)
         var output = Data(count: 32)
+        defer {
+            passwordBytes.withUnsafeMutableBytes { bytes in
+                _ = bytes.initializeMemory(as: UInt8.self, repeating: 0)
+            }
+            output.resetBytes(in: output.startIndex..<output.endIndex)
+        }
         let result = output.withUnsafeMutableBytes { out in
             salt.withUnsafeBytes { saltBytes in
                 passwordBytes.withUnsafeBytes { pass in
@@ -48,6 +54,7 @@ enum VaultCrypto {
         let privateKeyBlob: Data
         let ephemeralPublicKey: Data
         let wrappedKey: Data
+        var version: Int? = nil
     }
     static func makeMacUnlock(key: SymmetricKey, vaultID: UUID) throws -> MacUnlock {
         guard SecureEnclave.isAvailable else { throw VaultError.message("This Mac does not have an available Secure Enclave. Use a vault passcode instead.") }
@@ -60,14 +67,15 @@ enum VaultCrypto {
         let secret = try ephemeral.sharedSecretFromKeyAgreement(with: privateKey.publicKey)
         let wrap = secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data(vaultID.uuidString.utf8), sharedInfo: Data("HarborVault Mac unlock v1".utf8), outputByteCount: 32)
         return MacUnlock(privateKeyBlob: privateKey.dataRepresentation, ephemeralPublicKey: ephemeral.publicKey.x963Representation,
-                         wrappedKey: try seal(keyData(key), key: wrap, context: "mac/" + vaultID.uuidString))
+                         wrappedKey: try seal(keyData(key), key: wrap, context: "mac2/" + vaultID.uuidString), version: 2)
     }
     static func macKey(_ unlock: MacUnlock, vaultID: UUID, context: LAContext) throws -> SymmetricKey {
         let privateKey = try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: unlock.privateKeyBlob, authenticationContext: context)
         let publicKey = try P256.KeyAgreement.PublicKey(x963Representation: unlock.ephemeralPublicKey)
         let secret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         let wrap = secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data(vaultID.uuidString.utf8), sharedInfo: Data("HarborVault Mac unlock v1".utf8), outputByteCount: 32)
-        let data = try open(unlock.wrappedKey, key: wrap, context: "mac/" + vaultID.uuidString)
+        guard unlock.version == nil || unlock.version == 2 else { throw VaultError.message("Unsupported Mac-unlock version.") }
+        let data = try open(unlock.wrappedKey, key: wrap, context: (unlock.version == 2 ? "mac2/" : "mac/") + vaultID.uuidString)
         guard data.count == 32 else { throw VaultError.message("Invalid vault key.") }
         return SymmetricKey(data: data)
     }
@@ -82,7 +90,7 @@ enum VaultCrypto {
 
     // Bounded-memory file encryption. The complete header and chunk position are authenticated.
     static func encryptFile(source: URL, destination: URL, key: SymmetricKey, vaultID: UUID, fileID: UUID) throws -> (Int64, Data) {
-        let input = try FileHandle(forReadingFrom: source)
+        let input = try SecurityIO.open(source)
         defer { try? input.close() }
         let length = try input.seekToEnd()
         try input.seek(toOffset: 0)
@@ -127,7 +135,7 @@ enum VaultCrypto {
     }
 
     @discardableResult static func decryptFile(source: URL, key: SymmetricKey, vaultID: UUID, fileID: UUID, consume: (Data) throws -> Void) throws -> Data {
-        let input = try FileHandle(forReadingFrom: source)
+        let input = try SecurityIO.open(source)
         defer { try? input.close() }
         let header = try read(input, 24)
         let length = try fileLength(header: header)
@@ -161,7 +169,7 @@ enum VaultCrypto {
         init(source: URL, key: SymmetricKey, vaultID: UUID, fileID: UUID, expectedSize: Int64) throws {
             self.key = key
             identity = Data((vaultID.uuidString + "/" + fileID.uuidString).utf8)
-            input = try FileHandle(forReadingFrom: source)
+            input = try SecurityIO.open(source)
             do {
                 header = try read(input, 24)
                 length = Int64(try fileLength(header: header))

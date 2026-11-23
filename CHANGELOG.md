@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.3 — Portable vaults and offline reader
+
+- Export private `.harb` vaults with fresh sharing keys, or explicitly public copies that anyone can open without a password. Active folders and files are preserved; Recently Deleted is excluded and the original vault is unchanged.
+- Open both private and public exports with the standalone offline HTML reader. Browse folders, search filenames, preview supported files, and download verified copies. Drag a vault and encrypted key file together; public copies open automatically. The browser reader supports archives up to 256 MiB.
+- Harden private exports with a padded, authenticated `HARBPK02` envelope that hides exact file sizes, file boundaries, and item counts. Keep compatibility with older exports.
+- Save password-encrypted `.harbkey` files and expire app-managed key copies from the clipboard. Clipboard managers may ignore the concealed/transient hints.
+- Authenticate new vault settings and rotate the actual encryption key and all stored files when changing a vault password. Add metadata bounds and malformed-catalog checks.
+- Track known local metadata and portable-import history in Keychain to detect rollback or repeated/older imports. Add certificate-backed local build signing to preserve Keychain identity when a development identity is available.
+- Fix the HTML reader's empty-list rendering, folder navigation, and key-file drag-and-drop behavior.
+
+**Upgrade:** Back up the complete encrypted storage first. Change each older vault's password once to rotate its data key and upgrade its settings protection. Re-export older `.harb` files to get the new envelope; old copies and backups retain their original keys and protections. Key rotation needs room for a second encrypted copy.
+
+**Keychain:** This public download is ad-hoc signed and may ask for Keychain history access after an update. Choose Always Allow for this build; permission is per record. Stable certificate-backed local builds reduce repeated prompts across builds. Touch ID vault unlock and Keychain history access are separate. Existing history is preserved.
+
+**Public copies:** Anyone holding a public export can read, modify, download, and forward it; access cannot be recalled. Public copies do not prove sender identity. Exporting a public copy does not publish it online.
+
+Validation uses generated fixtures only: 345 native checks, 56 browser compatibility/security checks, 19 isolated Chrome UI checks, and a separate cross-build signing/history regression. No personal vaults, photos, sharing keys, or runtime history are included in source or downloads.
+
+Requires an Apple silicon Mac running macOS 14 or later. The public preview is ad-hoc signed, not Apple-notarized, and has not received an independent security audit.
+
 ## 1.4.6
 
 - Unlock vaults with inline Touch ID, including automatic prompting after idle locking and before sharing.

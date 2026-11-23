@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var body: some Scene {
         Window("Harbor Vault", id: "main") {
             RootView().environmentObject(model)
+                .onOpenURL { model.openPortable($0) }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in model.lock() }
         }.defaultSize(width: 1160, height: 760).windowStyle(.hiddenTitleBar)
             .commands {
@@ -34,11 +35,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 CommandGroup(replacing: .newItem) {
                     Button("New vault…") { model.showCreate = true }.keyboardShortcut("n").disabled(model.busy || model.storage == nil)
+                    Button("Open portable vault…") { model.choosePortableFile() }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(model.busy || model.storage == nil)
                     Button("New folder…") { model.newFolder() }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(!model.unlocked || model.busy || model.viewingRecentlyDeleted)
                     Button("Import files…") { model.pickImport() }.keyboardShortcut("i").disabled(!model.unlocked || model.busy || model.viewingRecentlyDeleted)
                     Button(model.viewingRecentlyDeleted ? "Delete Permanently…" : "Move to Trash…") { model.deleteSelection() }.keyboardShortcut(.delete, modifiers: [.command]).disabled(!model.unlocked || model.busy || model.selectionIDs.isEmpty)
                 }
                 CommandMenu("Vault") {
+                    Button("Export portable vault…") { model.exportPortable() }.disabled(!model.unlocked || model.busy)
+                    Button("Export public vault…") { model.exportPortable(publiclyReadable: true) }.disabled(!model.unlocked || model.busy)
+                    Divider()
                     Button("Lock vault") { model.lock() }.keyboardShortcut("l").disabled(!model.unlocked && !model.busy && model.inlineTouchIDContext == nil)
                     Button("Quick View selection") { model.toggleQuickView() }.keyboardShortcut("o").disabled(!model.unlocked || model.selectedItem == nil || model.busy)
                     Button("Export selection…") { model.exportSelection() }.keyboardShortcut("e").disabled(!model.unlocked || model.selectionIDs.isEmpty || model.busy)

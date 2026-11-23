@@ -8,6 +8,7 @@ import CoreText
 import ImageIO
 import PDFKit
 import AVFoundation
+import Security
 
 private var checks = 0
 private func check(_ condition: @autoclosure () throws -> Bool, _ label: String) throws {
@@ -21,6 +22,11 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
 
 @main struct StorageTests {
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--security-keychain") {
+            try keychainChecks()
+            print("Protected history checks passed: \(checks)")
+            return
+        }
         if CommandLine.arguments.contains("--hardware") {
             try hardware()
             print("Hardware protection checks passed: \(checks)"); return
@@ -28,6 +34,29 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("HarborVault-tests-" + UUID().uuidString)
         try VaultStorage.directory(temp)
         defer { try? FileManager.default.removeItem(at: temp) }
+        if let index = CommandLine.arguments.firstIndex(of: "--browser-fixtures"), CommandLine.arguments.indices.contains(index + 1) {
+            let destination = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+            try VaultStorage.directory(destination)
+            let storage = try VaultStorage(root: temp.appendingPathComponent("browser-fixture-vault"))
+            let (header, key) = try storage.create(name: "Browser fixture", passcode: "disposable fixture password", mac: false)
+            let folder = temp.appendingPathComponent("Documents")
+            try VaultStorage.directory(folder.appendingPathComponent("Empty folder"))
+            try Data("Harbor browser compatibility fixture.\nNothing personal here.".utf8).write(to: folder.appendingPathComponent("hello.txt"))
+            try Data().write(to: folder.appendingPathComponent("empty.bin"))
+            let multi = Data((0..<(VaultCrypto.chunkSize + 119)).map { UInt8($0 % 251) })
+            try multi.write(to: folder.appendingPathComponent("multi.bin"))
+            try Data("<script>throw new Error('should never run')</script>".utf8).write(to: folder.appendingPathComponent("unsafe.html"))
+            let imported = try storage.importSources([folder], parent: nil, manifest: VaultManifest(), vaultID: header.id, key: key)
+            let v1 = try PortableVault.exportLegacy(storage: storage, header: header, key: key, to: destination.appendingPathComponent("legacy.harb"))
+            let v2 = try PortableVault.export(storage: storage, header: header, key: key, to: destination.appendingPathComponent("hardened.harb"))
+            _ = try PortableVault.export(storage: storage, header: header, key: key, to: destination.appendingPathComponent("public.harb"), publiclyReadable: true)
+            try ProtectedSharingKey.save(v2.sharingKey, password: "disposable key-file password", to: destination.appendingPathComponent("fixture.harbkey"))
+            let metadata: [String: Any] = ["legacyKey": v1.sharingKey, "hardenedKey": v2.sharingKey,
+                "keyFilePassword": "disposable key-file password", "manifest": try JSONSerialization.jsonObject(with: JSONEncoder().encode(imported.manifest))]
+            try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]).write(to: destination.appendingPathComponent("fixture.json"))
+            print("Generated disposable browser compatibility fixtures.")
+            return
+        }
         if CommandLine.arguments.contains("--drops") {
             try await dropChecks(root: temp.appendingPathComponent("drops"))
             print("All screenshot-drop checks passed: \(checks)"); return
@@ -166,14 +195,55 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         try rejects("cyclic folders are rejected") { try storage.validate(invalid) }
         try rejects("path traversal names are rejected") { try VaultStorage.validName("../escape") }
         try rejects("invalid KDF settings are bounded") { _ = try VaultCrypto.derive("pass", salt: Data(repeating: 0, count: 32), rounds: Int.max) }
-        let changed = try storage.changePasscode("replacement test phrase", header: header, key: key)
+        let rotation = try storage.changePasscode("replacement test phrase", header: header, key: key)
+        let changed = rotation.header
         try rejects("old passcode stops working after change") { _ = try storage.passcodeKey("a strong test phrase", header: changed) }
-        try check(try VaultCrypto.keyData(storage.passcodeKey("replacement test phrase", header: changed)) == VaultCrypto.keyData(key), "changing passcode preserves the vault key and files")
-        let removed = try storage.remove(reopened.items.first { $0.parent == nil }!, manifest: reopened, vaultID: header.id, key: key)
+        let rotatedKey = try storage.passcodeKey("replacement test phrase", header: changed)
+        try check(VaultCrypto.keyData(rotatedKey) != VaultCrypto.keyData(key), "changing passcode rotates the vault key")
+        try check(try storage.preview(file, vaultID: header.id, key: rotatedKey) == text, "password rotation preserves file contents")
+        try rejects("an old header and password cannot decrypt current objects") {
+            let oldKey = try storage.passcodeKey("a strong test phrase", header: header)
+            _ = try VaultCrypto.decryptFile(source: objectURL, key: oldKey, vaultID: header.id, fileID: file.id) { _ in }
+        }
+        let removed = try storage.remove(reopened.items.first { $0.parent == nil }!, manifest: reopened, vaultID: header.id, key: rotatedKey)
         try check(removed.items.isEmpty, "folder deletion removes all nested catalog entries")
         try check(FileManager.default.fileExists(atPath: source.path), "vault deletion leaves external originals untouched")
         try check(!FileManager.default.fileExists(atPath: objectURL.path), "vault deletion removes encrypted objects")
 
+        // Construct the old local header format explicitly, using disposable bytes.
+        let (migrationHeader, migrationKey) = try storage.create(name: "Legacy migration fixture", passcode: "old fixture passphrase", mac: false)
+        var oldHeader = migrationHeader
+        oldHeader.version = 1
+        oldHeader.authenticationTag = nil
+        oldHeader.wrappedKey = try VaultCrypto.seal(VaultCrypto.keyData(migrationKey),
+            key: VaultCrypto.derive("old fixture passphrase", salt: oldHeader.salt), context: "pass/" + oldHeader.id.uuidString)
+        try VaultStorage.atomic(JSONEncoder().encode(oldHeader), to: storage.folder(oldHeader.id).appendingPathComponent("vault.json"))
+        let oldLoaded = try storage.loadHeader(oldHeader.id)
+        let oldUnlocked = try storage.passcodeKey("old fixture passphrase", header: oldLoaded)
+        try check(VaultCrypto.keyData(oldUnlocked) == VaultCrypto.keyData(migrationKey), "legacy local headers still unlock with their original password")
+        let legacyImport = try storage.importSources([source], parent: nil, manifest: VaultManifest(), vaultID: oldLoaded.id, key: oldUnlocked)
+        let migrated = try storage.changePasscode("new fixture passphrase", header: oldLoaded, key: oldUnlocked)
+        try check(migrated.header.version == 2 && migrated.header.authenticationTag?.count == 32,
+                  "changing a legacy password upgrades its settings authentication")
+        try check(VaultCrypto.keyData(migrated.key) != VaultCrypto.keyData(oldUnlocked), "legacy migration rotates the actual data key")
+        try check(try storage.preview(legacyImport.manifest.items[0], vaultID: oldLoaded.id, key: migrated.key) == text,
+                  "legacy migration retains the original readable file bytes")
+        let cancelledRotation = Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try storage.changePasscode("cancelled fixture password", header: migrated.header, key: migrated.key)
+        }
+        do {
+            _ = try await cancelledRotation.value
+            throw VaultError.message("Cancelled rotation unexpectedly completed.")
+        } catch is CancellationError {
+            let intactHeader = try storage.loadHeader(oldLoaded.id)
+            let intactKey = try storage.passcodeKey("new fixture passphrase", header: intactHeader)
+            try check(try storage.preview(legacyImport.manifest.items[0], vaultID: oldLoaded.id, key: intactKey) == text,
+                      "cancelling key rotation leaves the previous password and files usable")
+        }
+
+        try await secretClipboardChecks()
+        try await portableVaultChecks(root: temp.appendingPathComponent("portable"))
         try await modelChecks(root: temp.appendingPathComponent("model"))
         try await browserChecks(root: temp.appendingPathComponent("browser"))
         try await protectedActionChecks(root: temp.appendingPathComponent("protected"))
@@ -577,6 +647,9 @@ private func rejects(_ label: String, _ body: () throws -> Void) throws {
         var macHeader = model.vaults[0]
         // The placeholder envelope exercises the UI gate without prompting for authentication.
         macHeader.macUnlock = VaultCrypto.MacUnlock(privateKeyBlob: Data(), ephemeralPublicKey: Data(), wrappedKey: Data())
+        let modelKey = try model.storage!.passcodeKey("model test phrase", header: model.header!)
+        try model.storage!.saveHeader(macHeader, key: modelKey)
+        macHeader = try model.storage!.loadHeader(macHeader.id)
         model.vaults[0] = macHeader
         try check(!model.canStartAutomaticMacUnlock, "passcode-only idle lock does not queue Mac authentication")
         model.unlock(passcode: "model test phrase"); try await wait(model)
@@ -988,4 +1061,244 @@ private final class OCRFixtureProgress: @unchecked Sendable {
     private var progress: [String] = []
     func add(_ page: Int, _ total: Int) { lock.lock(); defer { lock.unlock() }; progress.append("\(page)/\(total)") }
     var values: [String] { lock.lock(); defer { lock.unlock() }; return progress }
+}
+
+extension StorageTests {
+    static func portableVaultChecks(root: URL) async throws {
+        try VaultStorage.directory(root)
+        let source = try VaultStorage(root: root.appendingPathComponent("source"))
+        let target = try VaultStorage(root: root.appendingPathComponent("target"))
+        let (original, originalKey) = try source.create(name: "Portable fixture", passcode: "original fixture password", mac: false)
+        let input = root.appendingPathComponent("Original folder")
+        try VaultStorage.directory(input.appendingPathComponent("Empty folder"))
+        let bytes = Data((0..<(VaultCrypto.chunkSize + 119)).map { UInt8($0 % 251) })
+        try bytes.write(to: input.appendingPathComponent("multi.bin"))
+        let secret = Data("PORTABLE-PRIVATE-FIXTURE-MARKER".utf8)
+        try secret.write(to: input.appendingPathComponent("private-name.txt"))
+        try Data().write(to: input.appendingPathComponent("empty.bin"))
+        let removed = root.appendingPathComponent("excluded.txt")
+        try Data("Recently deleted fixture".utf8).write(to: removed)
+        let imported = try source.importSources([input, removed], parent: nil, manifest: VaultManifest(), vaultID: original.id, key: originalKey)
+        let deleted = imported.manifest.items.first { $0.name == "excluded.txt" }!
+        let before = try source.trashItems([deleted], manifest: imported.manifest, vaultID: original.id, key: originalKey)
+        let file = root.appendingPathComponent("Fixture.harb")
+        let receipt = try PortableVault.export(storage: source, header: original, key: originalKey, to: file)
+        let package = try Data(contentsOf: file)
+        try check(package.prefix(8) == Data("HARBPK02".utf8), "portable export uses the padded version-2 envelope")
+        try check(package.range(of: secret) == nil && package.range(of: Data("private-name.txt".utf8)) == nil,
+                  "portable vault encrypts filenames and file contents")
+        try check(package.range(of: Data(receipt.sharingKey.utf8)) == nil && package.range(of: VaultCrypto.keyData(originalKey)) == nil,
+                  "portable file excludes the sharing key and the source vault key")
+        try check(try VaultCrypto.keyData(PortableVault.parseKey(receipt.sharingKey)) != VaultCrypto.keyData(originalKey),
+                  "portable exports use a fresh independent encryption key")
+        try rejects("incomplete portable keys are rejected") { _ = try PortableVault.parseKey("HARB-123") }
+        try rejects("exporting a portable vault never overwrites a file") {
+            _ = try PortableVault.export(storage: source, header: original, key: originalKey, to: file)
+        }
+        let cleanTarget = try target.headers().count
+        try rejects("a wrong sharing key cannot import the portable vault") {
+            _ = try PortableVault.importVault(from: file, sharingKey: String(repeating: "0", count: 64), name: "", passcode: "recipient fixture password", mac: false, into: target)
+        }
+        try check(try target.headers().count == cleanTarget, "wrong-key imports leave no registered vault")
+        let (copy, copyKey, manifest) = try PortableVault.importVault(from: file, sharingKey: receipt.sharingKey, name: "", passcode: "recipient fixture password", mac: false, into: target)
+        try check(copy.id != original.id && copy.name == original.name && copy.macUnlock == nil,
+                  "import creates a new local vault identity and preserves the portable name")
+        try check(VaultCrypto.keyData(copyKey) != VaultCrypto.keyData(originalKey) &&
+                  VaultCrypto.keyData(copyKey) != (try VaultCrypto.keyData(PortableVault.parseKey(receipt.sharingKey))),
+                  "the imported vault uses its own fresh encryption key")
+        let reopenedKey = try target.passcodeKey("recipient fixture password", header: copy)
+        try check(VaultCrypto.keyData(reopenedKey) == VaultCrypto.keyData(copyKey), "the recipient password unlocks the local copy")
+        try rejects("the sender password cannot unlock the recipient copy") { _ = try target.passcodeKey("original fixture password", header: copy) }
+        try check(manifest.items == before.items.filter { !$0.isDeleted } && manifest.recentlyDeleted.isEmpty,
+                  "portable export preserves active folder structure and excludes Recently Deleted")
+        for entry in manifest.items where !entry.isFolder {
+            let expected = try source.preview(entry, vaultID: original.id, key: originalKey)
+            try check(try target.preview(entry, vaultID: copy.id, key: reopenedKey) == expected,
+                      "portable roundtrip preserves verified bytes for " + entry.name)
+        }
+        try check(try source.loadManifest(vaultID: original.id, key: originalKey).items == before.items,
+                  "export leaves the source vault and Recently Deleted intact")
+        try rejects("replayed portable vaults require explicit confirmation") {
+            _ = try PortableVault.importVault(from: file, sharingKey: receipt.sharingKey, name: "Second copy", passcode: "another recipient password", mac: false, into: target)
+        }
+        let (second, _, _) = try PortableVault.importVault(from: file, sharingKey: receipt.sharingKey, name: "Second copy", passcode: "another recipient password", mac: false, into: target, allowPreviouslyImported: true)
+        try check(second.id != copy.id, "importing the same portable vault twice creates independent vaults")
+        var broken = package
+        broken[broken.count - 1] ^= 1
+        let tampered = root.appendingPathComponent("Damaged.harb")
+        try broken.write(to: tampered)
+        try rejects("tampered portable ciphertext cannot be imported") {
+            _ = try PortableVault.importVault(from: tampered, sharingKey: receipt.sharingKey, name: "", passcode: "recipient fixture password", mac: false, into: target)
+        }
+        try check(try target.headers().count == 2, "a failed import never registers a partial vault")
+        let remnants = try FileManager.default.contentsOfDirectory(atPath: target.root.path)
+        try check(!remnants.contains { $0.hasPrefix(".harb-import-") }, "a failed import removes its encrypted staging directory")
+        for data in [Data(package.dropLast()), package + Data([0])] {
+            try data.write(to: tampered)
+            try rejects("truncated or appended portable data is rejected") {
+                _ = try PortableVault.importVault(from: tampered, sharingKey: receipt.sharingKey, name: "", passcode: "recipient fixture password", mac: false, into: target)
+            }
+        }
+        let (emptyHeader, emptyKey) = try source.create(name: "Empty portable", passcode: "empty fixture password", mac: false)
+        let emptyURL = root.appendingPathComponent("Empty.harb")
+        let emptyReceipt = try PortableVault.export(storage: source, header: emptyHeader, key: emptyKey, to: emptyURL)
+        let (_, _, emptyManifest) = try PortableVault.importVault(from: emptyURL, sharingKey: emptyReceipt.sharingKey, name: "", passcode: "recipient fixture password", mac: false, into: target)
+        try check(emptyManifest.items.isEmpty, "empty vaults can be exported and imported")
+        let publicURL = root.appendingPathComponent("Public.harb")
+        let publicReceipt = try PortableVault.export(storage: source, header: original, key: originalKey, to: publicURL, publiclyReadable: true)
+        try check(publicReceipt.isPublic && publicReceipt.sharingKey.isEmpty && (try PortableVault.isPublic(publicURL)), "public exports are explicitly marked and require no separate key")
+        try check(try !PortableVault.isPublic(file), "private exports keep their private format by default")
+        let (publicHeader, publicKey, publicManifest) = try PortableVault.importVault(from: publicURL, sharingKey: "", name: "Public import fixture", passcode: "public import fixture password", mac: false, into: target)
+        try check(publicManifest.items == before.items.filter { !$0.isDeleted }, "public copies preserve active folders and files while excluding trash")
+        for entry in publicManifest.items where !entry.isFolder {
+            try check(try target.preview(entry, vaultID: publicHeader.id, key: publicKey) == source.preview(entry, vaultID: original.id, key: originalKey), "public copy verifies the original bytes for " + entry.name)
+        }
+        try rejects("imported public copies are protected by their chosen local password") { _ = try target.passcodeKey("", header: publicHeader) }
+        try check(try source.loadManifest(vaultID: original.id, key: originalKey).items == before.items, "creating a public copy leaves the original private vault unchanged")
+        var damagedPublic = try Data(contentsOf: publicURL)
+        damagedPublic[damagedPublic.count - 1] ^= 1
+        let brokenPublicURL = root.appendingPathComponent("Broken public.harb")
+        try damagedPublic.write(to: brokenPublicURL)
+        try rejects("damaged public copies are rejected") {
+            _ = try PortableVault.importVault(from: brokenPublicURL, sharingKey: "", name: "", passcode: "public import fixture password", mac: false, into: target, allowPreviouslyImported: true)
+        }
+        let clearKey = try PortableVault.parseKey(receipt.sharingKey)
+        let inner = root.appendingPathComponent("Unwrapped encrypted archive")
+        try PortableEnvelope.unwrap(file, to: inner, key: clearKey)
+        try check(try Data(contentsOf: inner).prefix(8) == Data("HARBPK01".utf8), "version 2 hides all legacy framing inside the encrypted envelope")
+        try check(package.range(of: Data("HARBOR01".utf8)) == nil, "portable file headers are hidden by the outer envelope")
+        for position in [8, 40, 48, 48 + 1024 * 1024 + 27] {
+            var changed = package
+            changed[position] ^= 1
+            let hostile = root.appendingPathComponent("Envelope tamper.harb")
+            try changed.write(to: hostile)
+            try rejects("outer header and record tampering is rejected at byte \(position)") {
+                _ = try PortableVault.importVault(from: hostile, sharingKey: receipt.sharingKey, name: "", passcode: "recipient fixture password", mac: false, into: target, allowPreviouslyImported: true)
+            }
+        }
+        let smallURL = root.appendingPathComponent("Small.harb")
+        let smallReceipt = try PortableVault.export(storage: source, header: emptyHeader, key: emptyKey, to: smallURL)
+        try check(try Data(contentsOf: smallURL).count == Data(contentsOf: emptyURL).count, "padding conceals exact sizes of small portable archives")
+        let protectedKeyURL = root.appendingPathComponent("Key.harbkey")
+        try ProtectedSharingKey.save(smallReceipt.sharingKey, password: "protected key password", to: protectedKeyURL)
+        let protectedBytes = try Data(contentsOf: protectedKeyURL)
+        try check(protectedBytes.range(of: Data(smallReceipt.sharingKey.utf8)) == nil, "saved sharing keys are encrypted on disk")
+        try check(try ProtectedSharingKey.load(from: protectedKeyURL, password: "protected key password") == smallReceipt.sharingKey, "saved keys unlock with their own password")
+        try rejects("wrong saved-key passwords are rejected") { _ = try ProtectedSharingKey.load(from: protectedKeyURL, password: "wrong key password") }
+        var hostileManifest = VaultManifest()
+        hostileManifest.items = [VaultItem(id: UUID(), parent: nil, name: "Huge folder", isFolder: true, size: Int64.max, created: Date(), modified: Date(), digest: nil)]
+        try rejects("hostile folder sizes cannot reach the status-bar accumulator") { try target.validate(hostileManifest) }
+        var alteredHeader = copy
+        alteredHeader.name = "Forged name"
+        try rejects("local header names are authenticated") { _ = try target.passcodeKey("recipient fixture password", header: alteredHeader) }
+        alteredHeader = copy
+        alteredHeader.version = 1; alteredHeader.authenticationTag = nil
+        try rejects("new headers cannot be downgraded to bypass authentication") { _ = try target.passcodeKey("recipient fixture password", header: alteredHeader) }
+        let legacyURL = root.appendingPathComponent("Legacy.harb")
+        let legacyReceipt = try PortableVault.exportLegacy(storage: source, header: emptyHeader, key: emptyKey, to: legacyURL)
+        var legacy = try Data(contentsOf: legacyURL)
+        let legacyID = String(data: legacy.subdata(in: 8..<44), encoding: .utf8)!
+        let oldLength = legacy.subdata(in: 44..<52).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+        let legacyKey = try PortableVault.parseKey(legacyReceipt.sharingKey)
+        let catalogData = try VaultCrypto.open(legacy.subdata(in: 52..<52 + Int(oldLength)), key: legacyKey, context: "harb/catalog/" + legacyID)
+        var catalogObject = try JSONSerialization.jsonObject(with: catalogData) as! [String: Any]
+        catalogObject["version"] = 1
+        catalogObject.removeValue(forKey: "sourceID"); catalogObject.removeValue(forKey: "exportedAt")
+        let legacyMetadata = try VaultCrypto.seal(JSONSerialization.data(withJSONObject: catalogObject), key: legacyKey, context: "harb/catalog/" + legacyID)
+        var legacyLength = UInt64(legacyMetadata.count).bigEndian
+        legacy = Data("HARBPK01".utf8) + Data(legacyID.utf8) + withUnsafeBytes(of: &legacyLength) { Data($0) } + legacyMetadata
+        try legacy.write(to: legacyURL)
+        let (_, _, legacyManifest) = try PortableVault.importVault(from: legacyURL, sharingKey: legacyReceipt.sharingKey, name: "", passcode: "recipient fixture password", mac: false, into: target)
+        try check(legacyManifest.items.isEmpty, "original version-1 portable vaults remain importable")
+        let invalidFolder = VaultItem(id: UUID(), parent: nil, name: "Invalid size", isFolder: true, size: Int64.max, created: Date(), modified: Date(), digest: nil)
+        var forgedManifest = VaultManifest()
+        forgedManifest.items = [invalidFolder]
+        catalogObject["manifest"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(forgedManifest))
+        let forgedMetadata = try VaultCrypto.seal(JSONSerialization.data(withJSONObject: catalogObject), key: legacyKey, context: "harb/catalog/" + legacyID)
+        var forgedLength = UInt64(forgedMetadata.count).bigEndian
+        let forged = Data("HARBPK01".utf8) + Data(legacyID.utf8) + withUnsafeBytes(of: &forgedLength) { Data($0) } + forgedMetadata
+        let forgedURL = root.appendingPathComponent("Hostile authenticated metadata.harb")
+        try forged.write(to: forgedURL)
+        try rejects("a malicious sender's authenticated folder sizes are rejected during import") {
+            _ = try PortableVault.importVault(from: forgedURL, sharingKey: legacyReceipt.sharingKey, name: "", passcode: "recipient fixture password", mac: false, into: target, allowPreviouslyImported: true)
+        }
+        let oversized = root.appendingPathComponent("Oversized metadata")
+        FileManager.default.createFile(atPath: oversized.path, contents: nil)
+        let hugeHandle = try FileHandle(forWritingTo: oversized)
+        try hugeHandle.truncate(atOffset: 8192)
+        try hugeHandle.close()
+        try rejects("bounded reads reject oversized metadata before decoding") { _ = try SecurityIO.read(oversized, maximum: 4096) }
+        let symlink = root.appendingPathComponent("Metadata link")
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: oversized)
+        try rejects("security reads reject symbolic links") { _ = try SecurityIO.open(symlink) }
+        let countBeforeCancel = try target.headers().count
+        let cancelledImport = Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try PortableVault.importVault(from: file, sharingKey: receipt.sharingKey, name: "", passcode: "recipient fixture password", mac: false, into: target)
+        }
+        do {
+            _ = try await cancelledImport.value
+            throw VaultError.message("Cancelled import unexpectedly completed.")
+        } catch is CancellationError {
+            try check(try target.headers().count == countBeforeCancel, "cancelled imports leave existing vaults intact and register no partial copy")
+        }
+        let cancelledURL = root.appendingPathComponent("Cancelled.harb")
+        let cancelledExport = Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try PortableVault.export(storage: source, header: original, key: originalKey, to: cancelledURL)
+        }
+        do {
+            _ = try await cancelledExport.value
+            throw VaultError.message("Cancelled export unexpectedly completed.")
+        } catch is CancellationError {
+            try check(!FileManager.default.fileExists(atPath: cancelledURL.path), "cancelled exports leave no partial .harb file")
+        }
+    }
+}
+
+extension StorageTests {
+    @MainActor static func secretClipboardChecks() async throws {
+        let board = NSPasteboard(name: .init("HarborSecretFixture-" + UUID().uuidString))
+        defer { SecretClipboard.clearIfOwned(); board.clearContents() }
+        SecretClipboard.copy("disposable sharing key", to: board, expiresAfter: 0.04)
+        try check(board.string(forType: .string) == "disposable sharing key" &&
+                  board.types?.contains(.init("org.nspasteboard.ConcealedType")) == true,
+                  "sharing-key copies use concealed clipboard hints")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        try check(board.string(forType: .string) == nil, "sharing-key clipboard entries expire automatically")
+        SecretClipboard.copy("another fixture key", to: board, expiresAfter: 60)
+        board.clearContents()
+        board.setString("new unrelated clipboard content", forType: .string)
+        SecretClipboard.clearIfOwned()
+        try check(board.string(forType: .string) == "new unrelated clipboard content",
+                  "secret cleanup preserves newer clipboard content")
+    }
+
+    static func keychainChecks() throws {
+        let id = UUID()
+        let sourceID = UUID()
+        defer {
+            for (service, account) in [("com.harborvault.local-state.v1", id), ("com.harborvault.portable-history.v1", sourceID)] {
+                let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service, kSecAttrAccount as String: account.uuidString,
+                    kSecAttrSynchronizable as String: false]
+                SecItemDelete(query as CFDictionary)
+            }
+        }
+        let first = Data(repeating: 1, count: 32)
+        let second = Data(repeating: 2, count: 32)
+        let third = Data(repeating: 3, count: 32)
+        try LocalVaultHistory.prepare(previous: nil, next: first, id: id)
+        try LocalVaultHistory.verify(first, id: id)
+        try LocalVaultHistory.prepare(previous: first, next: second, id: id)
+        try LocalVaultHistory.verify(second, id: id)
+        try rejects("Keychain checkpoints detect a restored older metadata state") { try LocalVaultHistory.verify(first, id: id) }
+        try LocalVaultHistory.prepare(previous: second, next: third, id: id)
+        try LocalVaultHistory.verify(second, id: id)
+        try rejects("an interrupted metadata write recovers the observed old state") { try LocalVaultHistory.verify(third, id: id) }
+        let date = Date()
+        try PortableHistory.record(date, for: sourceID)
+        try PortableHistory.record(date.addingTimeInterval(-10), for: sourceID)
+        try check(try PortableHistory.latest(for: sourceID) == date, "portable history cannot move its known export date backwards")
+    }
 }

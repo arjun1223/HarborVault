@@ -79,7 +79,7 @@ struct PasscodeSettingsView: View {
             Text("This changes the passcode for \(model.header?.name ?? "this vault") only.").font(.harbor(size: 12)).foregroundStyle(.secondary)
             PasswordEntry("New passcode · at least 10 characters", text: $passcode).harborField()
             PasswordEntry("Confirm new passcode", text: $confirm).harborField()
-            Text("The previous passcode will stop working. Keep the new one safe—there’s no reset.").font(.harbor(size: 11)).foregroundStyle(.secondary)
+            Text("Current files will be re-encrypted with a fresh key. This needs temporary space for another encrypted copy. Older backups and exported vaults retain their original access. Keep the new password safe.").font(.harbor(size: 11)).foregroundStyle(.secondary)
             if let error = model.error { Text(error).font(.harbor(size: 11)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
             HStack { Button("Cancel") { model.showPasscodeSettings = false }.disabled(model.busy); Spacer(); Button("Update passcode") { let input = passcode; passcode = ""; confirm = ""; model.changePasscode(input) }.buttonStyle(HarborButtonStyle(primary: true)).disabled(model.busy || passcode.count < 10 || passcode != confirm) }
         }.textFieldStyle(.plain).padding(32).frame(width: 460).background(HarborDesign.surface).interactiveDismissDisabled(model.busy)

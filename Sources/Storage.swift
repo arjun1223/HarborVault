@@ -5,7 +5,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 struct VaultHeader: Codable, Identifiable {
-    var version = 1
+    var version = 2
     let id: UUID
     var name: String
     let created: Date
@@ -13,6 +13,10 @@ struct VaultHeader: Codable, Identifiable {
     var rounds: Int
     var wrappedKey: Data
     var macUnlock: VaultCrypto.MacUnlock?
+    var authenticationTag: Data? = nil
+    var portablePackageID: UUID? = nil
+    var portableSourceID: UUID? = nil
+    var portableExportedAt: Date? = nil
 }
 
 struct VaultItem: Codable, Identifiable, Hashable {
@@ -64,6 +68,48 @@ struct ImportResult {
 final class VaultStorage: @unchecked Sendable {
     let root: URL
     private var lockFD: Int32 = -1
+    private var protectsHistory: Bool { root.standardizedFileURL == Self.defaultRoot.standardizedFileURL }
+    private func stateDigest(_ id: UUID, replacing name: String? = nil, with data: Data? = nil) throws -> Data {
+        var hash = SHA256()
+        for filename in ["vault.json", "catalog.sealed"] {
+            let bytes: Data
+            if filename == name, let data { bytes = data }
+            else {
+                bytes = try SecurityIO.read(folder(id).appendingPathComponent(filename),
+                    maximum: filename == "vault.json" ? 999_999 : 32 * 1024 * 1024)
+            }
+            var length = UInt64(bytes.count).bigEndian
+            hash.update(data: withUnsafeBytes(of: &length) { Data($0) })
+            hash.update(data: bytes)
+        }
+        return Data(hash.finalize())
+    }
+    private func commitMetadata(_ data: Data, filename: String, id: UUID) throws {
+        let url = folder(id).appendingPathComponent(filename)
+        let other = filename == "vault.json" ? "catalog.sealed" : "vault.json"
+        guard protectsHistory, FileManager.default.fileExists(atPath: folder(id).appendingPathComponent(other).path) else {
+            try Self.atomic(data, to: url)
+            return
+        }
+        let previous = FileManager.default.fileExists(atPath: url.path) ? try stateDigest(id) : nil
+        let next = try stateDigest(id, replacing: filename, with: data)
+        try LocalVaultHistory.prepare(previous: previous, next: next, id: id)
+        do { try Self.atomic(data, to: url) }
+        catch {
+            if let previous { try? LocalVaultHistory.finish(previous, id: id) }
+            throw error
+        }
+        // The disk commit has succeeded. Retain a recoverable pending checkpoint if
+        // Keychain finalization fails, instead of reporting failure to rollback callers.
+        try? LocalVaultHistory.finish(next, id: id)
+    }
+    func registerImportedVault(from temporary: VaultStorage, id: UUID) throws {
+        let next = protectsHistory ? try temporary.stateDigest(id) : nil
+        if let next { try LocalVaultHistory.prepare(previous: nil, next: next, id: id) }
+        try Task.checkCancellation()
+        try FileManager.default.moveItem(at: temporary.folder(id), to: folder(id))
+        if let next { try? LocalVaultHistory.finish(next, id: id) }
+    }
     static var defaultRoot: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("HarborVault.noindex", isDirectory: true)
     }
@@ -78,6 +124,8 @@ final class VaultStorage: @unchecked Sendable {
     deinit { if lockFD >= 0 { flock(lockFD, LOCK_UN); Darwin.close(lockFD) } }
     static func directory(_ url: URL) throws {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+        guard values.isSymbolicLink != true, values.isDirectory == true else { throw VaultError.message("Expected a vault directory without a symbolic link.") }
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     }
     func folder(_ id: UUID) -> URL { root.appendingPathComponent(id.uuidString, isDirectory: true) }
@@ -90,14 +138,40 @@ final class VaultStorage: @unchecked Sendable {
         }.sorted { $0.created < $1.created }
     }
     func loadHeader(_ id: UUID) throws -> VaultHeader {
-        let data = try Data(contentsOf: folder(id).appendingPathComponent("vault.json"))
+        let data = try SecurityIO.read(folder(id).appendingPathComponent("vault.json"), maximum: 999_999)
         guard data.count < 1_000_000 else { throw VaultError.message("Vault settings are too large.") }
         let h = try JSONDecoder().decode(VaultHeader.self, from: data)
-        guard h.id == id, h.version == 1, h.salt.count == 32, (600_000...2_000_000).contains(h.rounds) else { throw VaultError.message("This vault has invalid or unsupported settings.") }
+        guard h.id == id, (1...2).contains(h.version), h.salt.count == 32, (600_000...2_000_000).contains(h.rounds),
+              h.version == 1 || h.authenticationTag?.count == 32,
+              h.version >= 2 || h.macUnlock?.version != 2 else { throw VaultError.message("This vault has invalid or unsupported settings.") }
         return h
     }
-    func saveHeader(_ header: VaultHeader) throws {
-        try Self.atomic(try JSONEncoder().encode(header), to: folder(header.id).appendingPathComponent("vault.json"))
+    private static func headerBytes(_ header: VaultHeader) throws -> Data {
+        var copy = header
+        copy.authenticationTag = nil
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(copy)
+    }
+    private static func headerKey(_ key: SymmetricKey, id: UUID) -> SymmetricKey {
+        HKDF<SHA256>.deriveKey(inputKeyMaterial: key, salt: Data(id.uuidString.utf8),
+                              info: Data("Harbor header authentication v2".utf8), outputByteCount: 32)
+    }
+    func verifyHeader(_ header: VaultHeader, key: SymmetricKey) throws {
+        guard header.version >= 2 else { return }
+        guard let tag = header.authenticationTag,
+              HMAC<SHA256>.isValidAuthenticationCode(tag, authenticating: try Self.headerBytes(header),
+                                                    using: Self.headerKey(key, id: header.id)) else {
+            throw VaultError.message("Vault settings failed authentication.")
+        }
+    }
+    func saveHeader(_ header: VaultHeader, key: SymmetricKey) throws {
+        var authenticated = header
+        if header.version >= 2 {
+            authenticated.authenticationTag = Data(HMAC<SHA256>.authenticationCode(for: try Self.headerBytes(header),
+                using: Self.headerKey(key, id: header.id)))
+        }
+        try commitMetadata(try JSONEncoder().encode(authenticated), filename: "vault.json", id: header.id)
     }
     static func headerFingerprint(_ header: VaultHeader) throws -> Data {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -133,57 +207,101 @@ final class VaultStorage: @unchecked Sendable {
         let passKey = try VaultCrypto.derive(passcode, salt: salt)
         let macUnlock = mac ? try VaultCrypto.makeMacUnlock(key: key, vaultID: id) : nil
         let header = VaultHeader(id: id, name: clean, created: Date(), salt: salt, rounds: VaultCrypto.rounds,
-                                 wrappedKey: try VaultCrypto.seal(VaultCrypto.keyData(key), key: passKey, context: "pass/" + id.uuidString), macUnlock: macUnlock)
+                                 wrappedKey: try VaultCrypto.seal(VaultCrypto.keyData(key), key: passKey, context: "pass2/" + id.uuidString), macUnlock: macUnlock)
         let dir = folder(id)
         do {
             try Self.directory(dir.appendingPathComponent("objects", isDirectory: true))
             try saveManifest(VaultManifest(), vaultID: id, key: key)
-            try saveHeader(header)
+            try saveHeader(header, key: key)
         } catch { try? FileManager.default.removeItem(at: dir); throw error }
-        return (header, key)
+        return (try loadHeader(id), key)
     }
     func passcodeKey(_ passcode: String, header: VaultHeader) throws -> SymmetricKey {
         let derived = try VaultCrypto.derive(passcode, salt: header.salt, rounds: header.rounds)
         do {
-            let bytes = try VaultCrypto.open(header.wrappedKey, key: derived, context: "pass/" + header.id.uuidString)
+            let bytes = try VaultCrypto.open(header.wrappedKey, key: derived, context: (header.version >= 2 ? "pass2/" : "pass/") + header.id.uuidString)
             guard bytes.count == 32 else { throw VaultError.message("Invalid key.") }
-            return SymmetricKey(data: bytes)
+            let key = SymmetricKey(data: bytes)
+            try verifyHeader(header, key: key)
+            return key
         } catch { throw VaultError.message("That passcode didn’t unlock this vault, or its settings are damaged.") }
     }
-    func changePasscode(_ passcode: String, header: VaultHeader, key: SymmetricKey) throws -> VaultHeader {
+    func changePasscode(_ passcode: String, header: VaultHeader, key: SymmetricKey) throws -> (header: VaultHeader, key: SymmetricKey, warning: String?) {
         guard passcode.count >= 10 else { throw VaultError.message("Use at least 10 characters.") }
+        let manifest = try loadManifest(vaultID: header.id, key: key)
+        let freshKey = SymmetricKey(size: .bits256)
         var h = header
+        h.version = 2
         h.salt = try VaultCrypto.random(32)
         h.rounds = VaultCrypto.rounds
         let derived = try VaultCrypto.derive(passcode, salt: h.salt)
-        h.wrappedKey = try VaultCrypto.seal(VaultCrypto.keyData(key), key: derived, context: "pass/" + h.id.uuidString)
-        try saveHeader(h)
-        return h
+        h.wrappedKey = try VaultCrypto.seal(VaultCrypto.keyData(freshKey), key: derived, context: "pass2/" + h.id.uuidString)
+        h.macUnlock = header.macUnlock == nil ? nil : try VaultCrypto.makeMacUnlock(key: freshKey, vaultID: h.id)
+        let stage = root.appendingPathComponent(".rekey-" + UUID().uuidString)
+        try Self.directory(stage)
+        defer { try? FileManager.default.removeItem(at: stage) }
+        let temporary = try VaultStorage(root: stage)
+        try Self.directory(temporary.folder(h.id).appendingPathComponent("objects"))
+        for item in manifest.items where !item.isFolder {
+            try VaultCrypto.reencryptFile(source: object(h.id, item.id), destination: temporary.object(h.id, item.id),
+                sourceKey: key, destinationKey: freshKey, sourceVaultID: h.id, destinationVaultID: h.id,
+                sourceFileID: item.id, destinationFileID: item.id, expectedSize: item.size, expectedDigest: item.digest!)
+        }
+        try temporary.saveManifest(manifest, vaultID: h.id, key: freshKey)
+        try temporary.saveHeader(h, key: freshKey)
+        let authenticated = try temporary.loadHeader(h.id)
+        _ = try temporary.loadManifest(vaultID: h.id, key: freshKey)
+        try Task.checkCancellation()
+        let oldState = protectsHistory ? try stateDigest(h.id) : nil
+        let newState = protectsHistory ? try temporary.stateDigest(h.id) : nil
+        if let newState { try LocalVaultHistory.prepare(previous: oldState, next: newState, id: h.id) }
+        guard Darwin.renameatx_np(AT_FDCWD, temporary.folder(h.id).path, AT_FDCWD, folder(h.id).path, UInt32(RENAME_SWAP)) == 0 else {
+            if let oldState { try? LocalVaultHistory.finish(oldState, id: h.id) }
+            throw VaultError.message("Could not commit the key rotation. The original vault was kept.")
+        }
+        if let newState { try? LocalVaultHistory.finish(newState, id: h.id) }
+        var warning: String?
+        do { try FileManager.default.removeItem(at: temporary.folder(h.id)) }
+        catch { warning = "The new key is active, but old encrypted staging files need cleanup. Historical backups still need separate handling." }
+        return (authenticated, freshKey, warning)
     }
     func loadManifest(vaultID: UUID, key: SymmetricKey) throws -> VaultManifest {
-        let encrypted = try Data(contentsOf: folder(vaultID).appendingPathComponent("catalog.sealed"))
+        try verifyHeader(loadHeader(vaultID), key: key)
+        let encrypted = try SecurityIO.read(folder(vaultID).appendingPathComponent("catalog.sealed"), maximum: 32 * 1024 * 1024)
         let decoded = try VaultCrypto.open(encrypted, key: key, context: "catalog/" + vaultID.uuidString)
         let manifest = try JSONDecoder().decode(VaultManifest.self, from: decoded)
         try validate(manifest)
+        if protectsHistory { try LocalVaultHistory.verify(stateDigest(vaultID), id: vaultID) }
         return manifest
     }
     func saveManifest(_ manifest: VaultManifest, vaultID: UUID, key: SymmetricKey) throws {
+        if FileManager.default.fileExists(atPath: folder(vaultID).appendingPathComponent("vault.json").path) {
+            try verifyHeader(loadHeader(vaultID), key: key)
+        }
         try validate(manifest)
         var current = manifest; current.version = 2
-        let sealed = try VaultCrypto.seal(JSONEncoder().encode(current), key: key, context: "catalog/" + vaultID.uuidString)
-        try Self.atomic(sealed, to: folder(vaultID).appendingPathComponent("catalog.sealed"))
+        let encoded = try JSONEncoder().encode(current)
+        guard encoded.count <= 32 * 1024 * 1024 - 28 else { throw VaultError.message("The vault catalog exceeds its safe size limit.") }
+        let sealed = try VaultCrypto.seal(encoded, key: key, context: "catalog/" + vaultID.uuidString)
+        try commitMetadata(sealed, filename: "catalog.sealed", id: vaultID)
     }
     func validate(_ manifest: VaultManifest) throws {
-        guard (1...2).contains(manifest.version), Set(manifest.items.map(\.id)).count == manifest.items.count,
+        guard manifest.items.count <= 100_000,
+              (1...2).contains(manifest.version), Set(manifest.items.map(\.id)).count == manifest.items.count,
               (0...3650).contains(manifest.retentionDays) else { throw VaultError.message("Invalid vault catalog.") }
         let byID = Dictionary(uniqueKeysWithValues: manifest.items.map { ($0.id, $0) })
         var siblings = Set<String>()
+        var total: Int64 = 0
         for item in manifest.items {
             try Self.validName(item.name)
             let scope = item.isDeleted ? "trash/" + (item.trashRootID?.uuidString ?? "invalid") : "active"
             let identity = scope + "/" + (item.parent?.uuidString ?? "root") + "/" + item.name.lowercased()
             guard siblings.insert(identity).inserted, item.size >= 0,
                   item.isFolder || item.digest?.count == 32 else { throw VaultError.message("Invalid or duplicate vault item.") }
+            guard !item.isFolder || item.size == 0 else { throw VaultError.message("Folders must have a zero file size.") }
+            let (sum, overflow) = total.addingReportingOverflow(item.size)
+            guard !overflow else { throw VaultError.message("The total vault size exceeds its safe limit.") }
+            total = sum
             if item.isDeleted {
                 guard let rootID = item.trashRootID, let root = byID[rootID], root.isDeleted, root.trashRootID == root.id,
                       item.deletedAt == root.deletedAt, item.permanentDeletionDate == root.permanentDeletionDate,
@@ -199,7 +317,7 @@ final class VaultStorage: @unchecked Sendable {
             var parent = item.parent
             var seen: Set<UUID> = [item.id]
             while let id = parent {
-                guard seen.insert(id).inserted, let p = byID[id], p.isFolder else { throw VaultError.message("Invalid folder hierarchy.") }
+                guard seen.count < 128, seen.insert(id).inserted, let p = byID[id], p.isFolder else { throw VaultError.message("Invalid or excessively deep folder hierarchy.") }
                 parent = p.parent
             }
         }

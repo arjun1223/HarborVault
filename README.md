@@ -14,7 +14,7 @@
 
 ## Download
 
-**[Download Harbor Vault for Mac](https://github.com/arjun1223/HarborVault/releases/latest)** from the latest release. Open `HarborVault-1.4.6-macOS-arm64.dmg`, drag **Harbor Vault.app** into **Applications**, then eject the disk image and open the app.
+**[Download Harbor Vault for Mac](https://github.com/arjun1223/HarborVault/releases/latest)** from the latest release. Open `HarborVault-1.5.3-macOS-arm64.dmg`, drag **Harbor Vault.app** into **Applications**, then eject the disk image and open the app.
 
 The download supports **Apple silicon Macs running macOS 14 or newer**. Intel Macs are not supported by this build. The release includes `SHA256SUMS.txt` to verify the DMG download.
 
@@ -36,11 +36,19 @@ This is an early public build, **ad-hoc signed and not Apple-notarized**. macOS 
 | Private viewer | Leaving the full viewer locks that window; closing previews keeps the vault open |
 | Verified import | Finder files/folders, direct screenshot thumbnails, and image drops; verify before offering to trash Finder originals |
 | Recently Deleted | Per-vault recovery, adjustable retention, individual deletion dates, and restore locations |
+| Portable vaults | Private `.harb` copies with separate keys, or explicitly public copies anyone can open |
+| Offline HTML reader | Open exported vaults locally in a browser without installing the Mac app |
 | Vault transfers | Move one copy or duplicate into another vault after destination verification |
 | Sharing | Fresh verification before the native AirDrop, Messages, or other Mac sharing picker |
 | Preferences | Light/dark/system appearance, optional native Liquid Glass, text size, thumbnail size, and density |
 
 Images, PDFs, and small UTF-8 text have in-app previews. Supported videos play in either preview. Other file types can be stored, browsed together, shared, and exported; they display file information when an in-app preview is unavailable. Image, PDF, and text preview input is limited to 50 MB and text display to 2 MB. Videos stream from encrypted storage.
+
+## Open a portable vault in your browser
+
+[Download HarborReader.html](https://github.com/arjun1223/HarborVault/releases/latest/download/HarborReader.html), open it in a current desktop browser, and drop in a `.harb` file. Private copies require their sharing key or password-encrypted `.harbkey`; public copies open without a key. Files stay on your device. The reader supports folder browsing, filename search, previews, and individual verified downloads, with a 256 MiB archive limit.
+
+In the Mac app, use **Vault → Export portable vault…** for a private copy, or **Export public vault…** for a copy anyone can view and forward. Public exports have no confidentiality and cannot be recalled. Never distribute your vault's local storage folder or local passcode.
 
 ## First-time setup
 
@@ -51,6 +59,10 @@ Images, PDFs, and small UTF-8 text have in-app previews. Supported videos play i
 5. Use **Lock** (⌘L) when finished. Normal idle, sleep, and screen locking also apply.
 
 A vault passcode cannot be reset without an existing unlocked session. Keep a separate backup of irreplaceable files. See the [full user guide](docs/USER_GUIDE.md) for recovery, sharing, vault transfers, passcode changes, and backups.
+
+## Upgrading an existing vault
+
+Back up your complete encrypted storage before updating. Change an older vault’s password once to rotate its data key and authenticate its settings; allow free space for a second encrypted copy. Re-export old `.harb` files for the hardened envelope. Previous backups and exports keep their old credentials. This ad-hoc signed public preview may request Keychain history permission after updates; Touch ID unlock is separate. See the [user guide](docs/USER_GUIDE.md) for details.
 
 ## Your data stays on your Mac
 
